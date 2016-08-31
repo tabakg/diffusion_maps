@@ -12,18 +12,12 @@ import random
 import scipy.sparse as sparse
 from scipy.sparse.linalg import eigsh
 
-### from http://stackoverflow.com/questions/4319014/iterating-through-a-scipy-sparse-vector-or-matrix
-def coo(x):
-    cx = sparse.coo_matrix(x)
-    for i,j,v in zip(cx.row, cx.col, cx.data):
-        (i,j,v)
-
 dim = 1
-data_size = 50
+data_size = 5000
 
 mu = 0.0 ## data distribution mean.
 sigma = 1.0 ## data distribution standard deviation.
-epsilon = 0.1 ## cutoff for nearest neighbors.
+epsilon = 0.003 ## cutoff for nearest neighbors.
 gaussian_epsilon = epsilon / 3. ## width of Gaussian kernel.
 alpha = 0.5 ## coefficient to use for diffusion maps. See the wikipedia article.
 

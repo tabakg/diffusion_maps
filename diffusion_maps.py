@@ -14,7 +14,6 @@ from scipy.sparse.linalg import eigsh
 from scipy.sparse.linalg import eigs
 
 
-
 dim = 5
 data_size = 20
 

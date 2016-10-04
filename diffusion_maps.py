@@ -20,7 +20,15 @@ def make_gaussian_data(mu,sigma,num,dim):
     return (np.reshape(np.array([random.normalvariate(mu,sigma)
         for i in range(num*dim)]),(num,dim)) .tolist())
 
-def run_diffusion_map(data, params, symmetric = False):
+def run_diffusion_map(data, params, symmetric = False, eig_vec_both_sides = False):
+    '''
+    Optional argument symmetric detemines whether to use the symmetrized M_s or the non-symmetrized version. 
+    The symmetrized version could improve stability/performance, etc.
+    
+    Optional argument eig_vec_both_sides determines whether to compute both the left and right eigenvectors. If it is false, only     the right eigenvectors are computed.
+    
+    
+    '''
     
     epsilon, gaussian_epsilon,alpha,data_size = params["epsilon"],params["gaussian_epsilon"],params["alpha"],params["data_size"]
 
@@ -61,29 +69,35 @@ def run_diffusion_map(data, params, symmetric = False):
     if printing_calculations: print "L = ",L.todense()
 
     D_no_power = np.squeeze(np.asarray(L.sum(axis = 1))) ## get diagonal elements of D
-    
-        ## non-symmetrized. Must use eigensolver that doesn't assume symmetry.
-
+           
     ## symmetrized
     if symmetric:
         D_frac_pow = np.asarray([np.power(d, - 0.5) if not d == 0. else 0. for d in D_no_power])
+        D_frac_pow_inv = np.asarray([np.power(d, 0.5) if not d == 0. else 0. for d in D_no_power])
         D_s = sparse.diags([D_frac_pow],[0],format = 'csr')
-        if printing_calculations: print "D_s = ", D_s.todense()
+        D_s_inv = sparse.diags([D_frac_pow_inv],[0],format = 'csr')
+        if printing_calculations: 
+            print "D_s = ", D_s.todense()
         M = D_s * L.tocsr() * D_s
-        if printing_calculations: print M.todense()
-    else:
+        if printing_calculations: 
+            print M.todense()
+    else: ## non-symmetrized. Must use eigensolver that doesn't assume symmetry.
         D_frac_pow = np.asarray([np.power(d, - 1) if not d == 0. else 0. for d in D_no_power])
         D_s = sparse.diags([D_frac_pow],[0],format = 'csr')
         M = D_s * L.tocsr()
-
+        
     t4 = time.time()
-
+    
     if symmetric:
-        e_vals,e_vecs = eigsh(M, k = params["eigen_dims"], maxiter = data_size * 100 )
+        e_vals,e_vecs_tmp = eigsh(M, k = params["eigen_dims"], maxiter = data_size * 100 )
         ## change of basis below
-        e_vecs = np.asarray(D_s * np.asmatrix(e_vecs))
+        e_vecs = np.asarray(D_s * np.asmatrix(e_vecs_tmp))
+        if eig_vec_both_sides:
+            e_vecs_left = np.asarray(D_s_inv * np.asmatrix(e_vecs_tmp) )
     else:
         e_vals,e_vecs = eigs(M, k = params["eigen_dims"], maxiter = data_size * 100 )
+        if eig_vec_both_sides:
+            _,e_vecs_left = eigs(M.H, k = params["eigen_dims"], maxiter = data_size * 100 )
 
     ## get real part, there should not be imaginary part.
     e_vals,e_vecs = e_vals.real,e_vecs.real
@@ -99,8 +113,10 @@ def run_diffusion_map(data, params, symmetric = False):
         print ("Finding neighbors and generating K matrix", t3-t2)
         print ("calculations for M", t4-t3)
         print ("finding diffusion eigenvalues and eigenvectors",t5-t4)
-        
-    return e_vals,e_vecs
+    if eig_vec_both_sides:
+        return e_vals,e_vecs,e_vecs_left
+    else:
+        return e_vals,e_vecs
 
 def generate_data_n_gaussians(params):
     if params["data_size"] % params["n"] != 0:

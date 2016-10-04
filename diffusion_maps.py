@@ -73,9 +73,10 @@ def run_diffusion_map(data, params, symmetric = False, eig_vec_both_sides = Fals
     ## symmetrized
     if symmetric:
         D_frac_pow = np.asarray([np.power(d, - 0.5) if not d == 0. else 0. for d in D_no_power])
-        D_frac_pow_inv = np.asarray([np.power(d, 0.5) if not d == 0. else 0. for d in D_no_power])
         D_s = sparse.diags([D_frac_pow],[0],format = 'csr')
-        D_s_inv = sparse.diags([D_frac_pow_inv],[0],format = 'csr')
+        if eig_vec_both_sides: ## This matrix gives the change of basis for the left eigenvectors.
+            D_frac_pow_inv = np.asarray([np.power(d, 0.5) if not d == 0. else 0. for d in D_no_power])
+            D_s_inv = sparse.diags([D_frac_pow_inv],[0],format = 'csr')
         if printing_calculations: 
             print "D_s = ", D_s.todense()
         M = D_s * L.tocsr() * D_s
@@ -90,6 +91,7 @@ def run_diffusion_map(data, params, symmetric = False, eig_vec_both_sides = Fals
     
     def real_and_sorted(e_vals,e_vecs):
         ## get real part, there should not be imaginary part.
+        ## Then sort the eigenvectors and eigenvalues s.t. the eigenvalues monotonically decrease.
         e_vals,e_vecs = e_vals.real,e_vecs.real
         l = zip(e_vals,e_vecs.T)
         l.sort(key = lambda z: -z[0])
@@ -97,10 +99,11 @@ def run_diffusion_map(data, params, symmetric = False, eig_vec_both_sides = Fals
     
     if symmetric:
         e_vals_tmp,e_vecs_tmp = eigsh(M, k = params["eigen_dims"], maxiter = data_size * 100 )
-        ## change of basis below
+        ## change of basis below for right eigenvectors 
         e_vecs = np.asarray(D_s * np.asmatrix(e_vecs_tmp))
         e_vals,e_vecs = real_and_sorted(e_vals_tmp,e_vecs)
         if eig_vec_both_sides:
+            ## change of basis below for left eigenvectors 
             e_vecs_left = np.asarray(D_s_inv * np.asmatrix(e_vecs_tmp) )
             _,e_vecs_left = real_and_sorted(e_vals_tmp,e_vecs_left)
     else: ## not symmetric

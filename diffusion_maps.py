@@ -20,7 +20,7 @@ def make_gaussian_data(mu,sigma,num,dim):
     return (np.reshape(np.array([random.normalvariate(mu,sigma)
         for i in range(num*dim)]),(num,dim)) .tolist())
 
-def run_diffusion_map(data, params, symmetric = False, eig_vec_both_sides = False):
+def run_diffusion_map(data, params, symmetric = False, eig_vec_both_sides = False, tol = 1e-14):
     '''
     Optional argument symmetric detemines whether to use the symmetrized M_s or the non-symmetrized version. 
     The symmetrized version could improve stability/performance, etc.
@@ -88,22 +88,27 @@ def run_diffusion_map(data, params, symmetric = False, eig_vec_both_sides = Fals
         
     t4 = time.time()
     
+    def real_and_sorted(e_vals,e_vecs):
+        ## get real part, there should not be imaginary part.
+        e_vals,e_vecs = e_vals.real,e_vecs.real
+        l = zip(e_vals,e_vecs.T)
+        l.sort(key = lambda z: -z[0])
+        return np.asarray([el[0] for el in l]),np.asarray([el[1] for el in l]).T
+    
     if symmetric:
-        e_vals,e_vecs_tmp = eigsh(M, k = params["eigen_dims"], maxiter = data_size * 100 )
+        e_vals_tmp,e_vecs_tmp = eigsh(M, k = params["eigen_dims"], maxiter = data_size * 100 )
         ## change of basis below
         e_vecs = np.asarray(D_s * np.asmatrix(e_vecs_tmp))
+        e_vals,e_vecs = real_and_sorted(e_vals_tmp,e_vecs)
         if eig_vec_both_sides:
             e_vecs_left = np.asarray(D_s_inv * np.asmatrix(e_vecs_tmp) )
-    else:
+            _,e_vecs_left = real_and_sorted(e_vals_tmp,e_vecs_left)
+    else: ## not symmetric
         e_vals,e_vecs = eigs(M, k = params["eigen_dims"], maxiter = data_size * 100 )
+        e_vals,e_vecs = real_and_sorted(e_vals,e_vecs)
         if eig_vec_both_sides:
-            _,e_vecs_left = eigs(M.H, k = params["eigen_dims"], maxiter = data_size * 100 )
-
-    ## get real part, there should not be imaginary part.
-    e_vals,e_vecs = e_vals.real,e_vecs.real
-    l  = zip(e_vals,e_vecs.T)
-    l.sort(key = lambda z: -z[0])
-    e_vals,e_vecs = np.asarray([el[0] for el in l]),np.asarray([el[1] for el in l]).T
+            e_vals_left,e_vecs_left = eigs(M.T, k = params["eigen_dims"], maxiter = data_size * 100 )
+            e_vals_left,e_vecs_left = real_and_sorted(e_vals_left,e_vecs_left)
     
     t5 = time.time()
 

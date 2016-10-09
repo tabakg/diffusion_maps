@@ -1,3 +1,6 @@
+## local path to vp_tree library. 
+## Available at https://github.com/tabakg/cpp/tree/master/vp_trees_with_python_interface
+
 import sys
 sys.path.append("/Users/gil/Documents/repos/c_pp_stuff/vp_trees_with_python_interface")
 import vp_tree
@@ -12,7 +15,6 @@ import random
 import scipy.sparse as sparse
 from scipy.sparse.linalg import eigsh
 from scipy.sparse.linalg import eigs
-
 
 printing_calculations = False
 
@@ -30,7 +32,8 @@ def run_diffusion_map(data, params, symmetric = False, eig_vec_both_sides = Fals
     
     '''
     
-    epsilon, gaussian_epsilon,alpha,data_size = params["epsilon"],params["gaussian_epsilon"],params["alpha"],params["data_size"]
+    epsilon, gaussian_epsilon,alpha,k = params["epsilon"],params["gaussian_epsilon"],params["alpha"],params["eigen_dims"]
+    data_size = len(data)
 
     D = {tuple(value):i for i,value in enumerate(data)}
 
@@ -98,7 +101,7 @@ def run_diffusion_map(data, params, symmetric = False, eig_vec_both_sides = Fals
         return np.asarray([el[0] for el in l]),np.asarray([el[1] for el in l]).T
     
     if symmetric:
-        e_vals_tmp,e_vecs_tmp = eigsh(M, k = params["eigen_dims"], maxiter = data_size * 100 )
+        e_vals_tmp,e_vecs_tmp = eigsh(M, k = k, maxiter = data_size * 100 )
         ## change of basis below for right eigenvectors 
         e_vecs = np.asarray(D_s * np.asmatrix(e_vecs_tmp))
         e_vals,e_vecs = real_and_sorted(e_vals_tmp,e_vecs)
@@ -107,10 +110,10 @@ def run_diffusion_map(data, params, symmetric = False, eig_vec_both_sides = Fals
             e_vecs_left = np.asarray(D_s_inv * np.asmatrix(e_vecs_tmp) )
             _,e_vecs_left = real_and_sorted(e_vals_tmp,e_vecs_left)
     else: ## not symmetric
-        e_vals,e_vecs = eigs(M, k = params["eigen_dims"], maxiter = data_size * 100 )
+        e_vals,e_vecs = eigs(M, k = k, maxiter = data_size * 100 )
         e_vals,e_vecs = real_and_sorted(e_vals,e_vecs)
         if eig_vec_both_sides:
-            e_vals_left,e_vecs_left = eigs(M.T, k = params["eigen_dims"], maxiter = data_size * 100 )
+            e_vals_left,e_vecs_left = eigs(M.T, k = k, maxiter = data_size * 100 )
             e_vals_left,e_vecs_left = real_and_sorted(e_vals_left,e_vecs_left)
     
     t5 = time.time()

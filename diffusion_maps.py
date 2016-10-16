@@ -2,7 +2,7 @@
 ## Available at https://github.com/tabakg/cpp/tree/master/vp_trees_with_python_interface
 
 import sys
-sys.path.append("/Users/gil/Documents/repos/c_pp_stuff/vp_trees_with_python_interface")
+sys.path.append("/Users/gil/Documents/repos/cpp/vp_trees_cpp/vp_trees_cpp")
 import vp_tree
 
 import time

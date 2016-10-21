@@ -33,6 +33,18 @@ def run_diffusion_map(data, params, symmetric = False, eig_vec_both_sides = Fals
         "epsilon_cutoff" -- using some fixed epsilon.
         "num_neighbors" -- fixed number of neighbors.
     '''
+    
+    ## process input to make sure it is a list of lists of doubles.
+    ## This should work if the input is a list of lists, an array of lists,
+    ## of a list of arrays.
+    
+    if len(data) == 0:
+        raise ValueError("input data is empty.")
+    if not isinstance(data,list):
+        data = data.tolist()
+    for i in range(len(data)):
+        if not isinstance(data[i],list):
+            data[i] = data[i].tolist()
 
     gaussian_epsilon,alpha,k = params["gaussian_epsilon"],params["alpha"],params["eigen_dims"]
     if neighbor_selection == "epsilon_cutoff":

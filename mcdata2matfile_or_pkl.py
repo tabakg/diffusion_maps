@@ -2,7 +2,7 @@ from scipy.io import savemat
 from IPython.display import FileLink, display
 import numpy as np
 
-def mcdata2matfile_or_pkl(mcdata, file_name, obs, params, save_mat = True, save_pkl = False):
+def mcdata2matfile_or_pkl(mcdata, file_name, obs, params = {}, save_mat = True, save_pkl = False):
     """
     Takes an mcdata object and the observables and stores the states, expectations, times,
     observable labels (str and latex), random seeds, number of trajectories as:
@@ -14,8 +14,9 @@ def mcdata2matfile_or_pkl(mcdata, file_name, obs, params, save_mat = True, save_
             "observable_str": observable_str,      # shape (num_observables) string
             "observable_latex": observable_latex,  # shape (num_observables) string
             "seeds": seeds,                        # shape (ntraj) int
-            "params": params                       # dictionary of additional parameters. 
         }
+
+    Additional parameters can be passed using the params argument, as a python dictionary.
 
     """
     ntraj = mcdata.ntraj
@@ -47,7 +48,7 @@ def mcdata2matfile_or_pkl(mcdata, file_name, obs, params, save_mat = True, save_
     if save_pkl:
         import pickle
         output = open(file_name + ".pkl", 'wb')
-        pickle.dump( mdict, output)
+        pickle.dump( mdict, output,protocol=0)
         output.close()
         display(FileLink(file_name+".pkl"))
     return mdict

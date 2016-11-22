@@ -16,28 +16,52 @@ import scipy.sparse as sparse
 from scipy.sparse.linalg import eigsh
 from scipy.sparse.linalg import eigs
 
+import warnings
 printing_calculations = False
 
 def make_gaussian_data(mu,sigma,num,dim):
     return (np.reshape(np.array([random.normalvariate(mu,sigma)
         for i in range(num*dim)]),(num,dim)) .tolist())
 
-def run_diffusion_map(data, params, symmetric = False, eig_vec_both_sides = False, metric = "euclidean", neighbor_selection = "epsilon_cutoff"):
+def run_diffusion_map(data, params, symmetric = False, metric = "euclidean", neighbor_selection = "epsilon_cutoff", eig_vec_both_sides = False, return_eigenvectors = True):
     '''
-    Optional argument symmetric detemines whether to use the symmetrized M_s or the non-symmetrized version.
-    The symmetrized version could improve stability/performance, etc.
+    data (2D numpy array, list of arrays, array of lists, or list of lists):
+        input data points. Should all be the same size.
 
-    Optional argument eig_vec_both_sides determines whether to compute both the left and right eigenvectors. If it is false, only     the right eigenvectors are computed.
+    params: A dictionary with some numerical parameters:
+        "gaussian_epsilon": Bandwidth parameter eps s.t.
+            K = (-d^2(x,y) / (2 * eps) )
+        "alpha": scaling of local density.
+            0: No scaling; 0.5: Fokker-Plank scaling; 1.: Full scaling
+        "eigen_dims": number of lower dimensions k to find
+            (including the steady-state \psi_0)
+        "epsilon_cutoff": IF neighbor_selection = "epsilon_cutoff"
+            Max distance to use for ignoring points,
+        "num_neighbors": IF neighbor_selection == "num_neighbors"
+            Max number of neighbors to use before ignoring far away points
 
-    Optional argument neighbor_selection:
+    symmetric (Optional) Boolean:
+        detemines whether to use the symmetrized M_s or the non-symmetrized
+            version.
+        The symmetrized version could improve stability/performance, etc.
+            but requires matrix multiplication.
+
+    neighbor_selection (Optional) String:
         "epsilon_cutoff" -- using some fixed epsilon.
         "num_neighbors" -- fixed number of neighbors.
+
+    eig_vec_both_sides (Optional) Boolean:
+        determines whether to compute both the left and right eigenvectors.
+        If it is false, only  the right eigenvectors are computed.
+        This is ignored if return_eigenvectors == False.
+    return_eigenvectors (Optional) Boolean:
+        Return (left) eigenvectors or not.
     '''
-    
+
     ## process input to make sure it is a list of lists of doubles.
     ## This should work if the input is a list of lists, an array of lists,
     ## of a list of arrays.
-    
+
     if len(data) == 0:
         raise ValueError("input data is empty.")
     if not isinstance(data,list):
@@ -56,6 +80,14 @@ def run_diffusion_map(data, params, symmetric = False, eig_vec_both_sides = Fals
 
     data_size = len(data)
 
+    if k > data_size - 2:
+        warnings.warn("Low dimension k = params['eigen_dims'] is greater than number of points N - 2. Setting k = N - 2.")
+        k = data_size - 2
+    if k < 1:
+        warnings.warn("k < 1 (possibly after being modified to N-2), returning empty list.")
+        return []
+
+
     D = {tuple(value):i for i,value in enumerate(data)}
 
     t0 = time.time()
@@ -66,14 +98,19 @@ def run_diffusion_map(data, params, symmetric = False, eig_vec_both_sides = Fals
 
     #### Diffusion Mapping.
 
-    def fill_K_row(i,x,neighbors,K):
+    def fill_K_row(i,x,neighbors,K,metric='euclidean'):
         '''
         Fill the ith row of the K similarity matrix,
-        corresponding to point x with its neighborsself.
+        corresponding to point x with its neighbors.
         '''
-        for y in neighbors:
-            j = D[tuple(y)] ## index of point y
-            K[i,j] = np.exp(-la.norm(np.asarray(x)-np.asarray(y))**2 / (2.0 * gaussian_epsilon))
+        if metric == 'euclidean':
+            for y in neighbors:
+                j = D[tuple(y)] ## index of point y
+                K[i,j] = np.exp(-la.norm(np.asarray(x)-np.asarray(y))**2 / (2.0 * gaussian_epsilon))
+        elif metric == 'FS_metric':
+            for y in neighbors:
+                j = D[tuple(y)] ## index of point y
+                K[i,j] = np.exp(-tree.FS_metric(x,y)**2 / (2.0 * gaussian_epsilon))
         return
 
     K = sparse.lil_matrix((data_size,data_size)) ## efficient format for constructing matrices.
@@ -132,21 +169,29 @@ def run_diffusion_map(data, params, symmetric = False, eig_vec_both_sides = Fals
         l.sort(key = lambda z: -z[0])
         return np.asarray([el[0] for el in l]),np.asarray([el[1] for el in l]).T
 
-    if symmetric:
-        e_vals_tmp,e_vecs_tmp = eigsh(M, k = k, maxiter = data_size * 100 )
-        ## change of basis below for right eigenvectors
-        e_vecs = np.asarray(D_s * np.asmatrix(e_vecs_tmp))
-        e_vals,e_vecs = real_and_sorted(e_vals_tmp,e_vecs)
-        if eig_vec_both_sides:
-            ## change of basis below for left eigenvectors
-            e_vecs_left = np.asarray(D_s_inv * np.asmatrix(e_vecs_tmp) )
-            _,e_vecs_left = real_and_sorted(e_vals_tmp,e_vecs_left)
-    else: ## not symmetric
-        e_vals,e_vecs = eigs(M, k = k, maxiter = data_size * 100 )
-        e_vals,e_vecs = real_and_sorted(e_vals,e_vecs)
-        if eig_vec_both_sides:
-            e_vals_left,e_vecs_left = eigs(M.T, k = k, maxiter = data_size * 100 )
-            e_vals_left,e_vecs_left = real_and_sorted(e_vals_left,e_vecs_left)
+    if return_eigenvectors:
+        if symmetric:
+            e_vals_tmp,e_vecs_tmp = eigsh(M, k = k, maxiter = data_size * 100, return_eigenvectors = return_eigenvectors )
+            ## change of basis below for right eigenvectors
+            e_vecs = np.asarray(D_s * np.asmatrix(e_vecs_tmp))
+            e_vals,e_vecs = real_and_sorted(e_vals_tmp,e_vecs)
+            if eig_vec_both_sides:
+                ## change of basis below for left eigenvectors
+                e_vecs_left = np.asarray(D_s_inv * np.asmatrix(e_vecs_tmp) )
+                _,e_vecs_left = real_and_sorted(e_vals_tmp,e_vecs_left)
+        else: ## not symmetric
+            e_vals,e_vecs = eigs(M, k = k, maxiter = data_size * 100,return_eigenvectors = return_eigenvectors )
+            e_vals,e_vecs = real_and_sorted(e_vals,e_vecs)
+            if eig_vec_both_sides:
+                e_vals_left,e_vecs_left = eigs(M.T, k = k, maxiter = data_size * 100, return_eigenvectors = return_eigenvectors )
+                e_vals_left,e_vecs_left = real_and_sorted(e_vals_left,e_vecs_left)
+    else:
+        if symmetric:
+            e_vals = eigsh(M, k = k, maxiter = data_size * 100, return_eigenvectors = return_eigenvectors )
+        else: ## not symmetric
+            e_vals = eigs(M, k = k, maxiter = data_size * 100,return_eigenvectors = return_eigenvectors )
+        e_vals = e_vals.real.tolist()
+        e_vals.sort(key = lambda z: -z)
 
     t5 = time.time()
 
@@ -156,7 +201,9 @@ def run_diffusion_map(data, params, symmetric = False, eig_vec_both_sides = Fals
         print ("Finding neighbors and generating K matrix", t3-t2)
         print ("calculations for M", t4-t3)
         print ("finding diffusion eigenvalues and eigenvectors",t5-t4)
-    if eig_vec_both_sides:
+    if return_eigenvectors == False:
+        return e_vals
+    elif eig_vec_both_sides:
         return e_vals,e_vecs,e_vecs_left
     else:
         return e_vals,e_vecs

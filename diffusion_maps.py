@@ -1,5 +1,5 @@
 ## local path to vp_tree library.
-## Available at https://github.com/tabakg/cpp/tree/master/vp_trees_with_python_interface
+## Available at https://github.com/tabakg/vp_trees_cpp
 
 import sys
 sys.path.append("/Users/gil/Documents/repos/cpp/vp_trees_cpp/vp_trees_cpp")

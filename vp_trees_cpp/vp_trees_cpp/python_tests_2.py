@@ -52,7 +52,7 @@ t5 = time.time()
 
 neighborhoods = tree.find_all_N_neighbors(NN);
 
-print "Are neighborhoods generated both ways the same? " + str(neighborhoods == nearest_neighbrs)
+print ("Are neighborhoods generated both ways the same? " + str(neighborhoods == nearest_neighbrs))
 
 # print "individual nieghborhoods"
 # pp.pprint(nearest_neighbrs)

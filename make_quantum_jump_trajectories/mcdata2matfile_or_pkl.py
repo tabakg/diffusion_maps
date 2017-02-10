@@ -33,6 +33,8 @@ def mcdata2matfile_or_pkl(mcdata, file_name, obs, params = {}, save_mat = True, 
     observable_str = [str(o) for o in obs]
     observable_latex = [o._repr_latex_() for o in obs]
     seeds = mcdata.seeds
+    col_times = mcdata.col_times[0]
+    col_which = mcdata.col_which[0]
     mdict = {
             "psis": psis,
             "expects": expects,
@@ -40,6 +42,8 @@ def mcdata2matfile_or_pkl(mcdata, file_name, obs, params = {}, save_mat = True, 
             "observable_str": observable_str,
             "observable_latex": observable_latex,
             "seeds": seeds,
+            "col_times": col_times,
+            "col_which": col_which,
     }
     mdict.update(params)
     if save_mat:

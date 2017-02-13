@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 import vp_tree
 import time
 import numpy as np

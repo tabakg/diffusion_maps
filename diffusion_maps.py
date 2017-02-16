@@ -19,13 +19,19 @@ from scipy.sparse.linalg import eigsh
 from scipy.sparse.linalg import eigs
 
 import warnings
-printing_calculations = False
 
 def make_gaussian_data(mu,sigma,num,dim):
     return (np.reshape(np.array([random.normalvariate(mu,sigma)
         for i in range(num*dim)]),(num,dim)) .tolist())
 
-def run_diffusion_map(data, params, symmetric = False, metric = "euclidean", neighbor_selection = "epsilon_cutoff", eig_vec_both_sides = False, return_eigenvectors = True):
+def run_diffusion_map(data, 
+                      params,
+                      symmetric = False,
+                      metric = "euclidean",
+                      neighbor_selection = "epsilon_cutoff",
+                      eig_vec_both_sides = False,
+                      return_eigenvectors = True,
+                      printing_calculations = False):
     '''
     data (2D numpy array, list of arrays, array of lists, or list of lists):
         input data points. Should all be the same size.
@@ -210,7 +216,7 @@ def run_diffusion_map(data, params, symmetric = False, metric = "euclidean", nei
     else:
         return e_vals,e_vecs
     
-def run_diffusion_map_dense(distance_matrix,eps = 0.2):
+def run_diffusion_map_dense(distance_matrix,eps = 0.2, alpha = 1.):
     '''
     Computes the eigenvealues and eigenvectors for diffusion maps
     given a dense input.
@@ -230,7 +236,7 @@ def run_diffusion_map_dense(distance_matrix,eps = 0.2):
     d_K_inv = np.nan_to_num(d_K_inv)
     L = d_K_inv*(d_K_inv*K).T
     d_L = np.squeeze(np.asarray(L.sum(axis = 1)))
-    d_L_inv = np.power(d_L,-0.5)
+    d_L_inv = np.power(d_L,-alpha)
     M = d_L_inv*(d_L_inv*L).T
     eigs = la.eigh(M)
     return (eigs[0][::-1], eigs[1].T[::-1].T)

@@ -1,4 +1,5 @@
 #include <boost/python.hpp> /* python interface */
+#include <algorithm>    // std::find
 #include <iostream>
 #include <random>
 #include <vector>
@@ -263,6 +264,60 @@ node<vector>* vp_tree_helper(std::vector<data_point> data, std::string metric){
     return new node<vector>(*(vantage_point.point),vantage_point.ID, left,dist,right);
   }
 };
+node<vector>* vp_tree_helper_delta(std::vector<data_point> data, std::string metric, double delta){
+  if (data.size() == 0){
+    return NULL;
+  }
+  else if (data.size() == 1){
+    data_point vantage_point = data.back();
+    return new node<vector>(*(vantage_point.point),vantage_point.ID);
+  }
+  else if (data.size() == 2){
+    data_point vantage_point=data.back();
+    data.pop_back();
+
+    double dist_between_points = distance(*(vantage_point.point), *(data.back().point),metric);
+    if (dist_between_points > delta){
+      std::vector<data_point> singleton (data.begin(), data.end() );
+      node<vector>* left = vp_tree_helper(singleton,metric);
+      return new node<vector>(*(vantage_point.point),vantage_point.ID,left,dist_between_points);
+    }
+    else{
+      return new node<vector>(*(vantage_point.point),vantage_point.ID);
+    };
+  }
+  else{
+    data_point vantage_point=data.back();
+    data.pop_back();
+
+    auto cmp = [vantage_point,metric](data_point a, data_point b)
+      {return distance(*(a.point),*(vantage_point.point),metric) < distance(*(b.point),*(vantage_point.point),metric);};
+    auto closer_than_delta = [vantage_point,metric,delta](data_point a)
+      {return distance(*(a.point),*(vantage_point.point),metric) < delta;};
+
+    /// Need to bound away from ALL points ALREADY in the tree, not just the parent.
+    auto bound = std::partition (data.begin(), data.end(), closer_than_delta);
+    data.erase(data.begin(),bound);
+
+    if (data.size() < 2){
+      data.push_back(vantage_point);
+      return vp_tree_helper_delta(data,metric,delta);
+    }
+    else{
+      sort(data.begin(),data.end(), cmp);
+      int half_way = int( data.size() / 2 );
+      std::vector<data_point> close_points (data.begin(), data.begin() + half_way );
+      std::vector<data_point> far_points (data.begin() + half_way, data.end() );
+
+      node<vector>* left = vp_tree_helper(close_points,metric);
+      node<vector>* right = vp_tree_helper(far_points,metric);
+
+      double dist = 0.5 * (distance(*(vantage_point.point), *(close_points.back().point), metric )
+                         + distance(*(vantage_point.point), *(far_points.front().point), metric ));
+      return new node<vector>(*(vantage_point.point),vantage_point.ID, left,dist,right);
+    }
+  }
+};
 node<vector>* vp_tree(double_vec data, std::string metric){
   std::vector<data_point> data_points;
   for (unsigned i = 0; i < data.size(); i++){
@@ -272,6 +327,16 @@ node<vector>* vp_tree(double_vec data, std::string metric){
     data_points.push_back(p);
   }
   return vp_tree_helper(data_points,metric);
+}
+node<vector>* vp_tree_delta(double_vec data, std::string metric, double delta){
+  std::vector<data_point> data_points;
+  for (unsigned i = 0; i < data.size(); i++){
+    data_point p;
+    p.point = &data[i];
+    p.ID = i;
+    data_points.push_back(p);
+  }
+  return vp_tree_helper_delta(data_points,metric, delta);
 }
 void find_within_epsilon_helper(node<vector>* vp_tree,
   vector const& point, double epsilon, std::vector<node<vector>*> & found_points,
@@ -497,14 +562,28 @@ class tree_container{
       this->tree = ::vp_tree(data,metric);
       this->data = data;
     }
+    tree_container(double_vec data, std::string metric, double delta){
+      this->tree = ::vp_tree_delta(data,metric,delta);
+      this->data = data;
+    }
     tree_container(pylist data, std::string metric){
       double_vec data_in_vecs = pylist_to_double_vec(data);
       this->tree = ::vp_tree(data_in_vecs, metric);
       this->data = data_in_vecs;
     }
+    tree_container(pylist data, std::string metric, double delta){
+      double_vec data_in_vecs = pylist_to_double_vec(data);
+      this->tree = ::vp_tree_delta(data_in_vecs, metric,delta);
+      this->data = data_in_vecs;
+    }
     tree_container(pylist data){
       double_vec data_in_vecs = pylist_to_double_vec(data);
       this->tree = ::vp_tree(data_in_vecs, "euclidean");
+      this->data = data_in_vecs;
+    }
+    tree_container(pylist data,double delta){
+      double_vec data_in_vecs = pylist_to_double_vec(data);
+      this->tree = ::vp_tree_delta(data_in_vecs, "euclidean", delta);
       this->data = data_in_vecs;
     }
     std::vector<node<vector>*> find_within_epsilon(
@@ -571,6 +650,8 @@ BOOST_PYTHON_MODULE(vp_tree) {
     class_<tree_container>("tree_container", init<>()  )
       .def(init<pylist>())
       .def(init<pylist,std::string>())
+      .def(init<pylist,double>())
+      .def(init<pylist,std::string,double>())
       // .def("find_within_epsilon",&tree_container::find_within_epsilon_py)
       .def("find_within_epsilon", (pylist (tree_container::*) (pylist, double)) &tree_container::find_within_epsilon_py)
       .def("find_within_epsilon", (pylist (tree_container::*) (pylist, double, std::string)) &tree_container::find_within_epsilon_py)

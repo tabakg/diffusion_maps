@@ -216,7 +216,7 @@ def run_diffusion_map(data,
     else:
         return e_vals,e_vecs
     
-def run_diffusion_map_dense(distance_matrix,eps = 0.2, alpha = 1.):
+def run_diffusion_map_dense(distance_matrix,eps = 0.2, alpha = 1., eig_lower_bound = None, eig_upper_bound = None):
     '''
     Computes the eigenvealues and eigenvectors for diffusion maps
     given a dense input.
@@ -239,7 +239,12 @@ def run_diffusion_map_dense(distance_matrix,eps = 0.2, alpha = 1.):
     d_L_inv = np.power(d_L,-alpha)
     M = d_L_inv*(d_L_inv*L).T
     eigs = la.eigh(M)
-    return (eigs[0][::-1], eigs[1].T[::-1].T)
+    if eig_lower_bound is None:
+        eig_lower_bound = 0
+    if eig_upper_bound is None:
+        eig_upper_bound = len(eigs[0])
+    return (eigs[0][::-1][eig_lower_bound:eig_upper_bound],
+            eigs[1].T[::-1].T[:,eig_lower_bound:eig_upper_bound])
 
 def generate_data_n_gaussians(params):
     if params["data_size"] % params["n"] != 0:

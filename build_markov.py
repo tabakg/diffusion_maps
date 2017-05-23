@@ -139,7 +139,7 @@ def get_hmm_hidden_states(X,n_clusters = 30, return_model = False,n_iter=100, to
     hmm_model = hmm.GaussianHMM(n_components=n_clusters, covariance_type=covariance_type, n_iter = n_iter, tol = tol, random_state = random_state)
     hmm_model.fit(X)
     if verbose:
-        print "converged", hmm_model.monitor_.converged
+        print("converged", hmm_model.monitor_.converged)
     hidden_states = hmm_model.predict(X)
     if not return_model:
         return hidden_states
@@ -333,7 +333,7 @@ class dim_red_builder:
                 self.vals,self.vecs = pickle.load(pkl_file)
                 pkl_file.close()
             except IOError:
-                print "diffusion coordinates file not found. Instead running diffuions maps (this may take a few mintues)."
+                print ("diffusion coordinates file not found. Instead running diffuions maps (this may take a few mintues).")
                 load_diff_coords = False
         ########################################################################
         ### Not loading -> run diffusion maps

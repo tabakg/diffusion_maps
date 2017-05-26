@@ -150,7 +150,7 @@ def get_obs_sample_points(obs_indices,traj_expects):
     '''
     Observed quantities at sampled points
     '''
-    return np.asarray([traj_expects[l][:] for l in obs_indices])
+    return np.asarray([traj_expects[:,l] for l in obs_indices])
 
 def get_expect_in_clusters(obs_indices,clusters, n_clusters, obs_sample_points):
     '''
@@ -247,8 +247,8 @@ def ellipses_plot(X,indices,hmm_model,n_clusters,std_dev = 1):
         e.set_clip_box(ax.bbox)
         e.set_clip_box(ax.bbox)
 
-    ax.set_xlim(-.06, .06 )
-    ax.set_ylim(-.06,.06 )
+    # ax.set_xlim(-.06, .06 )
+    # ax.set_ylim(-.06,.06 )
     ax.scatter(x, y, c=np.log(z), s=100, edgecolor='')
 
 ################################################################################
@@ -425,7 +425,7 @@ class dim_red_builder:
 class markov_model_builder:
     def __init__(self, dim_red, name = None):
         self.X = dim_red.X
-        self.traj_expects = dim_red.traj_expects
+        self.expects_sampled = dim_red.expects_sampled
         self.obs_indices = dim_red.obs_indices
         if name is None:
             self.name = dim_red.name + "_markov_builder"
@@ -494,12 +494,12 @@ class markov_model_builder:
             raise ValueError("Unknown method type. method can be 'hmm' or 'agg_clustering'. ")
 
         if get_expects:
-            self.obs_sample_points = get_obs_sample_points(self.obs_indices,self.traj_expects)
+            self.obs_sample_points = get_obs_sample_points(self.obs_indices,self.expects_sampled)
             self.expects_in_clusters = get_expect_in_clusters(self.obs_indices,self.clusters, self.n_clusters, self.obs_sample_points)
 
     def get_ordering_by_obs(self,obs_index = 0):
         assert self.status == 'model built'
-        obs_used = self.traj_expects[obs_index]
+        obs_used = self.expects_sampled[:,obs_index]
         expects_in_clusters = [np.average([obs_used[i] for i in self.clusters[k]]) for k in range(self.n_clusters) ]
         D = {num:i for num,i in  zip(expects_in_clusters,range(self.n_clusters))}
         cluster_order = [D[key] for key in sorted(D.keys())]

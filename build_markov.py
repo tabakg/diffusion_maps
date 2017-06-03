@@ -48,6 +48,8 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Ellipse
 from scipy.stats import gaussian_kde
 
+import qutip
+
 ## Style for plots
 plt.style.use("ggplot")
 
@@ -170,15 +172,15 @@ def get_expect_in_clusters(obs_indices,clusters, n_clusters, obs_sample_points):
     Get the average expectation value in each cluster.
     '''
     expect_in_clusters = {}
-    for l in obs_indices:
-        expect_in_clusters[l] = [0. for _ in range(n_clusters)]
+    for obs_index in obs_indices:
+        expect_in_clusters[obs_index] = [0. for _ in range(n_clusters)]
         for clust_index,cluster in enumerate(clusters):
             for point in cluster:
-                expect_in_clusters[l][clust_index] += obs_sample_points[l][point]
+                expect_in_clusters[obs_index][clust_index] += obs_sample_points[obs_index][point]
             if len(cluster) != 0:
-                expect_in_clusters[l][clust_index] /= float(len(cluster))
+                expect_in_clusters[obs_index][clust_index] /= float(len(cluster))
             else:
-                expect_in_clusters[l][clust_index] = None
+                expect_in_clusters[obs_index][clust_index] = None
     return expect_in_clusters
 
 def get_obs_generated(  obs_indices,
@@ -187,9 +189,11 @@ def get_obs_generated(  obs_indices,
                         steps = 10000,
                         n_clusters = 10,
                         start_cluster = 0, ## index of starting cluster
+                        return_state_indices_only = False,
                      ):
-
     steps = run_markov_chain(start_cluster,T_matrix, steps = steps)
+    if return_state_indices_only:
+        return steps
     obs_generated = np.asarray([[expect_in_clusters[l][cluster] for cluster in steps ] for l in obs_indices])
     return obs_generated
 
@@ -274,6 +278,16 @@ def ellipses_plot(X,indices,hmm_model,n_clusters,std_dev = 1):
 #### Object used to hold the model
 ################################################################################
 
+class dim_red_simple:
+    '''
+    Minimal container for dimensionality reduction.
+    '''
+    def __init__(self,Ntraj,expects_sampled,obs_indices,name):
+        self.Ntraj = Ntraj
+        self.expects_sampled = np.concatenate(expects_sampled,axis = 0)
+        self.obs_indices = obs_indices
+        self.name = name
+
 class dim_red_builder:
     def __init__(self,
                 Regime= "kerr_bistable",
@@ -297,12 +311,22 @@ class dim_red_builder:
         if mcdata is None:
             self.Ntraj, self.duration, self.traj_data, self.traj_expects = load_trajectory(self.Regime)
         else:
-            self.Ntraj, self.duration, states, self.traj_expects = mcdata.ntraj, mcdata.times.shape[0], mcdata.states, np.concatenate(mcdata.expect,axis=1)
-            self.traj_data = np.concatenate(
-                            [[ np.concatenate([f(states[traj_num][time_num].data.todense())
-                                for f in (lambda x: x.real, lambda x: x.imag) ])
-                                    for traj_num in range(self.Ntraj)]
-                                        for time_num in range(int(self.duration))])
+            assert not mcdata is None
+            try:
+                iterator = iter(mcdata)
+                self.Ntraj = 0
+                traj_data_lst = []
+                traj_expects_lst = []
+                for it in iterator:
+                    Ntraj, duration, traj_data, traj_expects = self._extract_from_mcdata(it)
+                    self.Ntraj += Ntraj
+                    traj_data_lst.append(traj_data)
+                    traj_expects_lst.append(traj_expects)
+                    self.duration = duration ## Assume these are the same....
+                self.traj_data = np.concatenate(traj_data_lst)
+                self.traj_expects = np.concatenate(traj_expects_lst)
+            except:
+                self.Ntraj, self.duration, self.traj_data, self.traj_expects = self._extract_from_mcdata(mcdata)
 
         self.num_data_points = len(self.traj_data)
         self.num_sample_points = num_sample_points ## NA if using hand_picked indices
@@ -337,6 +361,15 @@ class dim_red_builder:
                                                 for expects_index in self.obs_indices]
                                                     for i in self.sample_indices])
         self.status = 'not attempted'
+
+    def _extract_from_mcdata(self,mcdata):
+        Ntraj, duration, states, traj_expects = mcdata.ntraj, mcdata.times.shape[0], mcdata.states, np.concatenate(mcdata.expect,axis=1)
+        traj_data = np.concatenate(
+                        [[ np.concatenate([f(states[traj_num][time_num].data.todense())
+                            for f in (lambda x: x.real, lambda x: x.imag) ])
+                                for traj_num in range(Ntraj)]
+                                    for time_num in range(int(duration))])
+        return Ntraj, duration, traj_data, traj_expects
 
     def run_diffusion_map(  self,
                             which_points = 'all', ## 'all', 'num_neighbors', or 'epsilon_cutoff'
@@ -568,7 +601,7 @@ class markov_model_builder:
         assert self.status == 'model built'
         ellipses_plot(self.X[:,:self.num_diff_coords],indices,self.hmm_model,self.n_clusters)
 
-    def generate_obs_traj(self,steps = 10000,random_state = 1,start_cluster=0 ):
+    def generate_obs_traj(self,steps = 10000,random_state = 1,start_cluster=0, return_state_indices_only = False):
         assert self.status == 'model built'
         np.random.seed(random_state)
         return get_obs_generated(   self.obs_indices,
@@ -577,4 +610,162 @@ class markov_model_builder:
                                     steps = steps,
                                     n_clusters = self.n_clusters,
                                     start_cluster = start_cluster, ## index of starting cluster
+                                    return_state_indices_only = return_state_indices_only,
                                 )
+
+class hybrid_model:
+    '''
+    hybrid_slh: SLH model with QNET symbols (for qutip simulation),
+        as well as sympy symbols to be replaced in a time-dependent way
+    markov_model_builder: An object containing the HMM for the semi-classical quantities
+    replacement_dict: Dictionary that specifies which sympy symbols should
+        be replaced by which index of the HMM
+    '''
+    def __init__(self,hybrid_slh,markov_model_builder,replacement_dict, obsq, delta_t):
+        self.hybrid_slh = hybrid_slh
+        self.markov_model_builder = markov_model_builder
+        self.replacement_dict = replacement_dict
+        self._gen_slh_each_cluster()
+        self.L_length = hybrid_slh.L.shape[0]
+        self.Nfock = hybrid_slh.space.dimension
+        self.obsq = obsq
+        self.delta_t = delta_t
+
+    def load(self):
+        f = open(self.name,'rb')
+        tmp_dict = pickle.load(f)
+        f.close()
+        self.__dict__.update(tmp_dict)
+
+    def save(self):
+        f = open(self.name,'wb')
+        pickle.dump(self.__dict__,f,2)
+        f.close()
+
+    def _gen_slh_each_cluster(self):
+        '''
+        Generate the slh model to use at each cluster.
+        For each index, the only non-numerical symbols should
+        be QNET symbols.
+        '''
+        slh_num_lst = []
+        for clust_index in range(self.markov_model_builder.n_clusters):
+            expects_in_clusters = [self.markov_model_builder.expects_in_clusters[obs_index][clust_index]
+                                      for symbol,obs_index in self.replacement_dict.items()]
+            symbol_to_expects = {sym:val for sym,val in zip(self.replacement_dict,expects_in_clusters)}
+            slh_num_lst.append(self.hybrid_slh.substitute(symbol_to_expects))
+
+        self.slh_num_lst = slh_num_lst
+
+    def _generate_reduced_inputs(self,
+                                 Tsim,
+                                 random_state = 1,
+                                 start_cluster=0,):
+        ## generated model to use for time dependence in the hybrid model.
+        gen_state_index_lst = []
+        for self.traj_num in range(self.Ntraj):
+            gen_state_index = self.markov_model_builder.generate_obs_traj(
+                                                steps = self.dur,
+                                                random_state = random_state,
+                                                start_cluster = start_cluster,
+                                                return_state_indices_only = True,
+            )
+            gen_state_index_lst.append(gen_state_index)
+        self.gen_state_index_lst = gen_state_index_lst
+
+    def generate_trajectories(self,
+                              Tsim,
+                              Ntraj = 1,
+                              random_state = 1,
+                              start_cluster=0,
+                              trajs_per_generated_inputs = 1,
+                             ):
+        self.Ntraj = Ntraj
+        self.trajs_per_generated_inputs = trajs_per_generated_inputs
+        self.dur = len(Tsim)
+        self._generate_reduced_inputs(Tsim,random_state,start_cluster)
+
+        H_red_lst = []
+        L_red_lst = []
+        for clust_num in range(self.markov_model_builder.n_clusters):
+            H_red, L_red = self.slh_num_lst[clust_num].HL_to_qutip()
+            H_red_lst.append(H_red)
+            L_red_lst += L_red
+
+        red_model_mcdata_ls = []
+        for state_index in self.gen_state_index_lst:
+            '''
+            coefficients for delta function in cluster i at time t.
+            This may slow with n_clusters large.
+
+
+            Pickles OK once we modified qutip parallel.py:
+            replaced multiprocessing by pathos.multiprocessing
+            which uses dill.py instead of pickle.py. This is needed because
+            coeff_func is generated in a closure.
+            '''
+
+            H_coeffs_gen = np.asarray([[1. if state_index[t] == i else 0
+                                        for i in range(self.markov_model_builder.n_clusters)]
+                                            for t in range(self.dur) ])
+
+            def coeff_func_maker(i):   #### <--- doesn't work with original qutip, see comments above.
+                def coeff_func(t,args):
+                    t_ = round(t/self.delta_t)
+                    return H_coeffs_gen[t_,i]
+                return coeff_func
+
+            coeff_func_lst = [coeff_func_maker(i) for i in range(self.markov_model_builder.n_clusters)]
+
+            H0 = qutip.qeye(self.Nfock) ## dummy to make qutip work
+            psi0 = qutip.basis(self.Nfock, 0)
+            H_t_lst = [H0] + [[H, f] for H,f in zip(H_red_lst,coeff_func_lst) ]
+            L_t_lst = [[L, f] for L,f in zip(L_red_lst,np.concatenate([self.L_length*[el] for el in coeff_func_lst])) ]
+
+            ## generate trajectory
+            red_model_mcdata_ls.append(qutip.mcsolve([H0]+H_t_lst, psi0, Tsim, L_t_lst,
+                                   self.obsq, ntraj=trajs_per_generated_inputs,
+                                   options=qutip.Odeoptions(store_states=True,average_expect=False,rhs_reuse=True)))
+        self.red_model_mcdata_ls = red_model_mcdata_ls
+
+    def get_generated_trajs(self,):
+        '''
+        Returns the generated trajectories generated by the hybrid model.
+
+        Args:
+
+        Returns:
+            A tensor containing trajectories of both systems 1 and 2
+            The tensor is 3 or 4 dimensional, depending on trajs_per_generated_inputs
+            used by generate_trajectories.
+
+            generate_trajectories == 1 case:
+            output is a 3D tensor with indices [i,j,k]
+            i: which trajectory
+            j: which timestep
+            k: index of which expectation value. The expectation values of
+                systems 1 and 2 are staked.
+
+            generate_trajectories > 1 case:
+            output is a 4D tensor with indices [l,i,j,k]
+            l: Fixing a trajectory of system 1, the index of the trajectory
+                of system 2 with the fixed trajectory of system 1.
+            i,j,k: same asd above.
+        '''
+        assert hasattr(self,'gen_state_index_lst') ## make sure trajectories have been generated.
+        def generated_traj_one_per_sys1(sys_1_index = 0):
+            expects_12_for_traj = []
+            for traj_num in range(self.Ntraj):
+                expect_in_cluster_1 = self.markov_model_builder.expects_in_clusters
+                states_1 = self.gen_state_index_lst[traj_num]
+                sys_1_expects = np.asarray([[expect_in_cluster_1[obs][i]
+                    for i in states_1] for obs in self.markov_model_builder.obs_indices]).T
+                sys_12_expects = np.hstack([sys_1_expects,
+                                            np.asarray(self.red_model_mcdata_ls[traj_num].expect[sys_1_index]).T])
+                expects_12_for_traj.append(sys_12_expects)
+            return np.asarray(expects_12_for_traj)
+        if self.trajs_per_generated_inputs == 1:
+            return generated_traj_one_per_sys1()
+        else:
+            return np.asarray([generated_traj_one_per_sys1(j)
+                for j in range(self.trajs_per_generated_inputs)])

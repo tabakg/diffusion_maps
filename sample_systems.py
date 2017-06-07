@@ -15,9 +15,6 @@ import numpy as np
 
 from IPython.display import display
 
-import matplotlib.pyplot as plt
-plt.style.use("ggplot")
-
 import pickle
 
 # Define Kerr parameters
@@ -26,14 +23,14 @@ Delta = symbols("Delta", real=True)
 kappa_1, kappa_2 = symbols("kappa_1, kappa_2", real=True, positive=True)
 alpha0 = symbols("alpha_0")
 
-def make_kerr_slh(index = 0, which_symbols = 'qnet', params = None):
+def make_kerr_slh(index = 0, which_symbols = 'qnet',params = None):
     '''
     Make a kerr slh with given index. The constants chi, Delta, kappa_1 and kappa_2
     are also given an index.
     '''
     if which_symbols == 'qnet':
         a = Destroy(str(index))
-        a.space.dimension = Nfock
+        a.space.dimension = params['Nfock']
     elif which_symbols == 'sympy':
         a = symbols('a_'+str(index))
     else:
@@ -73,11 +70,12 @@ def make_traj(slh,
                Tsim,
                obsq,
                ntraj = 1,
+               seeds = [1],
              ):
     #### Running stochastic trajectory on given system
     H, L = slh.HL_to_qutip()
     psi0 = qutip.tensor(*[qutip.basis(d,0) for d in H.dims[0]])
     mcdata = qutip.mcsolve(H, psi0, Tsim, L,
                        obsq, ntraj=ntraj,
-                       options=qutip.Odeoptions(store_states=True,average_expect=False))
+                       options=qutip.Odeoptions(store_states=True,average_expect=False, seeds = seeds))
     return mcdata

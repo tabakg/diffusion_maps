@@ -621,7 +621,7 @@ class hybrid_model:
     replacement_dict: Dictionary that specifies which sympy symbols should
         be replaced by which index of the HMM
     '''
-    def __init__(self,hybrid_slh,markov_model_builder,replacement_dict, obsq, delta_t):
+    def __init__(self,hybrid_slh,markov_model_builder,replacement_dict, obsq, delta_t, name = None):
         self.hybrid_slh = hybrid_slh
         self.markov_model_builder = markov_model_builder
         self.replacement_dict = replacement_dict
@@ -630,6 +630,10 @@ class hybrid_model:
         self.Nfock = hybrid_slh.space.dimension
         self.obsq = obsq
         self.delta_t = delta_t
+        if name is None:
+            self.name = 'hybrid_' + markov_model_builder.name
+        else:
+            self.name = name
 
     def load(self):
         f = open(self.name,'rb')
@@ -679,11 +683,16 @@ class hybrid_model:
                               random_state = 1,
                               start_cluster=0,
                               trajs_per_generated_inputs = 1,
+                              seeds= [1],
+                              gen_state_index_lst = None,
                              ):
         self.Ntraj = Ntraj
         self.trajs_per_generated_inputs = trajs_per_generated_inputs
         self.dur = len(Tsim)
-        self._generate_reduced_inputs(Tsim,random_state,start_cluster)
+        if gen_state_index_lst is None:
+            self._generate_reduced_inputs(Tsim,random_state,start_cluster)
+        else:
+            self.gen_state_index_lst = gen_state_index_lst
 
         H_red_lst = []
         L_red_lst = []
@@ -725,7 +734,8 @@ class hybrid_model:
             ## generate trajectory
             red_model_mcdata_ls.append(qutip.mcsolve([H0]+H_t_lst, psi0, Tsim, L_t_lst,
                                    self.obsq, ntraj=trajs_per_generated_inputs,
-                                   options=qutip.Odeoptions(store_states=True,average_expect=False,rhs_reuse=True)))
+                                   options=qutip.Odeoptions(store_states=True,average_expect=False,rhs_reuse=True,
+                                   seeds = seeds)))
         self.red_model_mcdata_ls = red_model_mcdata_ls
 
     def get_generated_trajs(self,):

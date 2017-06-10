@@ -364,11 +364,11 @@ class dim_red_builder:
 
     def _extract_from_mcdata(self,mcdata):
         Ntraj, duration, states, traj_expects = mcdata.ntraj, mcdata.times.shape[0], mcdata.states, np.concatenate(mcdata.expect,axis=1)
-        traj_data = np.concatenate(
+        traj_data = np.concatenate(np.concatenate(
                         [[ np.concatenate([f(states[traj_num][time_num].data.todense())
                             for f in (lambda x: x.real, lambda x: x.imag) ])
                                 for traj_num in range(Ntraj)]
-                                    for time_num in range(int(duration))])
+                                    for time_num in range(int(duration))]), axis = -1).T
         return Ntraj, duration, traj_data, traj_expects
 
     def run_diffusion_map(  self,

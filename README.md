@@ -9,9 +9,10 @@ http://www.wisdom.weizmann.ac.il/~nadler/Publications/dm_nips05.pdf
 
 
 ## Note:
+
 In the future the installation requirements will be grouped inside of a Docker or Singularity file. We detail the installation instructions below.
  
-Installing Anaconda
+## Installing Anaconda
 I might make changes in the repos to make it easier to install and manage. In the meantime, here is how I install my packages.
  
 After anaconda installation, we did the following:

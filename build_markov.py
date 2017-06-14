@@ -514,12 +514,12 @@ class markov_model_builder:
                     method = 'hmm',
                     n_iter=1000,
                     covariance_type = 'full',
-                    num_diff_coords = None,
                     tol=1e-2,
                     get_expects = True,
                     random_state = 1,
                     verbose = True,
                     which_coords = 'X',
+                    coords_indices_to_use = None,
                     ):
         '''
         method can be 'hmm' or 'agg_clustering'.
@@ -534,18 +534,15 @@ class markov_model_builder:
         self.n_clusters = n_clusters
 
         if which_coords == 'X':
-            assert hasattr(self, 'X')
-            if num_diff_coords is None:
-                self.num_diff_coords = self.X.shape[-1]
-            else:
-                self.num_diff_coords = num_diff_coords
-            X_to_use = self.X[:,:self.num_diff_coords]
+            self.X_to_use = self.X
         else:
             assert which_coords == 'expects'
-            X_to_use = self.expects_sampled
+            self.X_to_use = self.expects_sampled
+        if not coords_indices_to_use is None:
+            self.X_to_use = self.X_to_use[:,coords_indices_to_use]
         if self.method == 'hmm':
             # try:
-            self.labels, self.hmm_model = get_hmm_hidden_states(X_to_use,
+            self.labels, self.hmm_model = get_hmm_hidden_states(self.X_to_use,
                                                             self.n_clusters,
                                                             return_model=True,
                                                             n_iter=n_iter,
@@ -563,7 +560,7 @@ class markov_model_builder:
             self.T = make_markov_model(self.labels,self.n_clusters)
             self.status = 'model built'
         elif self.method == 'agg_clustering':
-            self.labels = get_cluster_labels(X_to_use, self.n_clusters)
+            self.labels = get_cluster_labels(self.X_to_use, self.n_clusters)
             self.clusters = get_clusters(self.labels,self.n_clusters)
             self.T = make_markov_model(self.labels,self.n_clusters)
             self.status = 'model built'
@@ -599,12 +596,14 @@ class markov_model_builder:
         Works only for hmm, using the diffusion coordinates X.
         '''
         assert self.status == 'model built'
-        ellipses_plot(self.X[:,:self.num_diff_coords],indices,self.hmm_model,self.n_clusters)
+        ellipses_plot(self.X_to_use,indices,self.hmm_model,self.n_clusters)
 
-    def generate_obs_traj(self,steps = 10000,random_state = 1,start_cluster=0, return_state_indices_only = False):
+    def generate_obs_traj(self,steps = 10000,random_state = 1,start_cluster=0, return_state_indices_only = False,obs_indices = None):
         assert self.status == 'model built'
+        if obs_indices is None:
+            obs_indices = self.obs_indices
         np.random.seed(random_state)
-        return get_obs_generated(   self.obs_indices,
+        return get_obs_generated(   obs_indices,
                                     self.T, ## Transition matrix used
                                     self.expects_in_clusters,
                                     steps = steps,

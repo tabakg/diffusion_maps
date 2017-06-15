@@ -328,6 +328,7 @@ class dim_red_builder:
             except:
                 self.Ntraj, self.duration, self.traj_data, self.traj_expects = self._extract_from_mcdata(mcdata)
 
+
         self.num_data_points = len(self.traj_data)
         self.num_sample_points = num_sample_points ## NA if using hand_picked indices
         self.sample_type = sample_type
@@ -339,10 +340,10 @@ class dim_red_builder:
             self.obs_indices = obs_indices
 
         if sample_type == 'uniform_time':
-            downsample_rate = num_data_points / num_sample_points
-            self.sample_indices = range(num_data_points)[::downsample_rate]
+            downsample_rate = int(self.num_data_points / self.num_sample_points)
+            self.sample_indices = range(self.num_data_points)[::downsample_rate]
         elif sample_type == 'uniform_random':
-            self.sample_indices = random.sample(range(num_data_points),num_sample_points)
+            self.sample_indices = random.sample(range(self.num_data_points),num_sample_points)
         elif sample_type == 'first_n':
             self.sample_indices = range(num_sample_points)
         elif sample_type == 'last_n':
@@ -450,20 +451,30 @@ class dim_red_builder:
             self.expects_sampled,label_shift = 0)
 
     def plot_diffusion_v_diffusion( self,
-                                    color_by_percentile = True,
+                                    color = 'percentile',
                                     max_coord1 = 4,
                                     max_coord2 = 4,
                                     ):
         for l in self.obs_indices:
             fig = plt.figure(figsize=(max_coord2*10,max_coord1*10))
-            if color_by_percentile:
-                expects_sampled_percentile = rankdata(self.expects_sampled[:,l], "average") / self.num_sample_points
+            if color == 'percentile':
+                cols = rankdata(self.expects_sampled[:,l], "average") / self.num_sample_points
+            else:
+                assert color == 'density'
             for k in range(max_coord1):
                 for i in range(k+1,max_coord2):
+                    x,y = self.X[:,k],self.X[:,i]
+                    if color == 'density':
+                        xy = np.vstack([x,y])
+                        z = gaussian_kde(xy)(xy)
+                        cols = np.log(z)
                     ax = fig.add_subplot(max_coord1, max_coord2, k*max_coord2+i+1)
-                    plt.scatter(self.X[:,k],self.X[:,i], c = expects_sampled_percentile)
+                    plt.scatter(x,y, c = cols)
                     plt.title("Observable" + str(l) + "; coordinates: " + str(i) + "versus " + str(k) )
             plt.show()
+            if color == 'density':
+                break
+
 
     def plot_diffusion_3d(self,
                             color_by_percentile = True,

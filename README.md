@@ -38,7 +38,7 @@ Install packages using pip: pip install package4 package5
 package1 package2 package3 package4 package5 are packages to be installed
  
 Packages we installed from conda: numpy matplotlib sympy scipy
-Packages we installed from pip: qutip QNET
+Packages we installed from pip: qutip QNET hmmlean
  
 Create python 3.5 (with numpy matplotlib sympy scipy qutip QNET)
 Create python 2.7 (with numpy matplotlib sympy scipy)

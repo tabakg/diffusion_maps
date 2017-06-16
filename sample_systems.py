@@ -25,7 +25,7 @@ alpha0 = symbols("alpha_0")
 
 def make_kerr_slh(index = 0, which_symbols = 'qnet',params = None):
     '''
-    Make a kerr slh with given index. The constants chi, Delta, kappa_1 and kappa_2
+    Make a non-driven kerr slh with given index. The constants chi, Delta, kappa_1 and kappa_2
     are also given an index.
     '''
     if which_symbols == 'qnet':

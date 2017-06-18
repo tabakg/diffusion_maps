@@ -18,7 +18,7 @@ def load_trajectory(Regime = "absorptive_bistable",
     ## some useful numbers
 
     Ntraj = pkl_dict['Ntraj']
-    duration = pkl_dict['duration']
+    duration = pkl_dict['psis'].shape[1] ##pkl_dict['duration']
 
     ##  Extract data into points of format (psi.real,psi.imag) from all trajectories.
 

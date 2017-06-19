@@ -216,17 +216,19 @@ def contour_plot(Mat):
     fig.colorbar(cax)
     plt.show()
 
-def make_density_scatterplts(X,Y,label_shift = 0):
+def make_density_scatterplts(X,Y,label_shift = 0, observable_names = None,s=5):
+    if observable_names is None:
+        observable_names = [str(j+1) for j in range(X.shape[-1])]
     fig, ax = plt.subplots(nrows=X.shape[-1],ncols=Y.shape[-1],figsize = (Y.shape[-1]*10,X.shape[-1]*10))
     for i,row in enumerate(ax):
         for j,col in enumerate(row):
-            col.set_title( "O" + str(j+1) +" vs  Phi" + str(i+1+label_shift))
+            col.set_title( observable_names[j] +" vs  Phi" + str(i+1+label_shift))
             x = X[:,i]
             y = Y[:,j]
 
             xy = np.vstack([x,y])
             z = gaussian_kde(xy)(xy)
-            col.scatter(x, y, c=np.log(z), s=5, edgecolor='')
+            col.scatter(x, y, c=np.log(z), s=s, edgecolor='')
     plt.show()
 
 def ellipses_plot(X,indices,hmm_model,n_clusters,std_dev = 1):
@@ -311,7 +313,6 @@ class dim_red_builder:
         if mcdata is None:
             self.Ntraj, self.duration, self.traj_data, self.traj_expects = load_trajectory(self.Regime)
         else:
-            assert not mcdata is None
             try:
                 iterator = iter(mcdata)
                 self.Ntraj = 0
@@ -449,15 +450,28 @@ class dim_red_builder:
         pickle.dump(self.__dict__,f,2)
         f.close()
 
-    def plot_obs_v_diffusion(self):
-        make_density_scatterplts(self.X[:,0:],
-            self.expects_sampled,label_shift = 0)
+    def plot_obs_v_diffusion(self,
+                            observable_names = None,
+                            s=5,
+                            which_obs = None,
+                            ):
+        if which_obs is None:
+            which_obs = range(self.expects_sampled.shape[-1])
+        make_density_scatterplts(self.X,
+                                self.expects_sampled[:,which_obs],
+                                label_shift = 0,
+                                observable_names = observable_names,
+                                s=s,
+                                )
 
     def plot_diffusion_v_diffusion( self,
                                     color = 'percentile',
                                     max_coord1 = 4,
                                     max_coord2 = 4,
+                                    observable_names = None,
                                     ):
+        if observable_names is None:
+            observable_names = [str(i) for i in self.obs_indices]
         for l in self.obs_indices:
             fig = plt.figure(figsize=(max_coord2*10,max_coord1*10))
             if color == 'percentile':
@@ -467,15 +481,18 @@ class dim_red_builder:
             for k in range(max_coord1):
                 for i in range(k+1,max_coord2):
                     x,y = self.X[:,k],self.X[:,i]
+                    ax = fig.add_subplot(max_coord1, max_coord2, k*max_coord2+i+1)
                     if color == 'density':
                         xy = np.vstack([x,y])
                         z = gaussian_kde(xy)(xy)
                         cols = np.log(z)
-                    ax = fig.add_subplot(max_coord1, max_coord2, k*max_coord2+i+1)
+                        plt.title("Log(density). Phi" + str(i+1) + " versus  Phi" + str(k+1) )
+                    else:
+                        plt.title("Observable: " + observable_names[l] + "; Coordinates: Phi" + str(i+1) + " versus  Phi" + str(k+1) )
                     plt.scatter(x,y, c = cols)
-                    plt.title("Observable" + str(l) + "; coordinates: " + str(i) + "versus " + str(k) )
+                    plt.tight_layout()
             plt.show()
-            if color == 'density':
+            if color == 'density': ## only one iteration
                 break
 
 
@@ -628,11 +645,13 @@ class markov_model_builder:
 
 class hybrid_model:
     '''
-    hybrid_slh: SLH model with QNET symbols (for qutip simulation),
-        as well as sympy symbols to be replaced in a time-dependent way
-    markov_model_builder: An object containing the HMM for the semi-classical quantities
-    replacement_dict: Dictionary that specifies which sympy symbols should
-        be replaced by which index of the HMM
+    Args:
+        hybrid_slh: SLH model with QNET symbols (for qutip simulation),
+            as well as sympy symbols to be replaced in a time-dependent way
+        markov_model_builder: An object containing the HMM for the semi-classical quantities.
+            It should have a method generate_obs_traj to generate trajectories.
+        replacement_dict: Dictionary that specifies which sympy symbols should
+            be replaced by which index of the HMM
     '''
     def __init__(self,hybrid_slh,markov_model_builder,replacement_dict, obsq, delta_t, name = None):
         self.hybrid_slh = hybrid_slh
@@ -676,14 +695,14 @@ class hybrid_model:
 
     def _generate_reduced_inputs(self,
                                  Tsim,
-                                 random_state = 1,
+                                 seeds = [1],
                                  start_cluster=0,):
         ## generated model to use for time dependence in the hybrid model.
         gen_state_index_lst = []
         for self.traj_num in range(self.Ntraj):
             gen_state_index = self.markov_model_builder.generate_obs_traj(
                                                 steps = self.dur,
-                                                random_state = random_state,
+                                                random_state = seeds[self.traj_num],
                                                 start_cluster = start_cluster,
                                                 return_state_indices_only = True,
             )
@@ -693,17 +712,17 @@ class hybrid_model:
     def generate_trajectories(self,
                               Tsim,
                               Ntraj = 1,
-                              random_state = 1,
                               start_cluster=0,
                               trajs_per_generated_inputs = 1,
-                              seeds= [1],
+                              seeds = [1],
                               gen_state_index_lst = None,
                              ):
+        assert Ntraj == len(seeds)
         self.Ntraj = Ntraj
         self.trajs_per_generated_inputs = trajs_per_generated_inputs
         self.dur = len(Tsim)
         if gen_state_index_lst is None:
-            self._generate_reduced_inputs(Tsim,random_state,start_cluster)
+            self._generate_reduced_inputs(Tsim,seeds,start_cluster)
         else:
             self.gen_state_index_lst = gen_state_index_lst
 

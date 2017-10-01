@@ -10,9 +10,9 @@ integration easier later.
 '''
 
 import numpy as np
+import numpy.linalg as la
 import sdeint
 from scipy import sparse
-import numpy.linalg as la
 from time import time
 
 from multiprocess import Pool
@@ -21,6 +21,68 @@ from multiprocess import Pool
 import matplotlib as mil
 mil.use('TkAgg')
 import matplotlib.pyplot as plt
+
+class drift_diffusion_holder(object):
+    '''
+    We include a way to update L*psi and l = <psi,L,psi> when t changes.
+    This makes the code somewhat more efficient since these values are used
+    both for the drift f and the diffusion G terms, and don't have to be
+    recomputed each time.
+    '''
+    def __init__(self, H, Ls, t_span):
+        self.t_old = min(tspan) - 1.
+        self.H = H
+        self.Ls = Ls
+        self.Lpsis = None
+        self.ls = None
+
+    def update_Lpsis_and_ls(self, psi, t):
+        '''Updates Lpsis and ls.
+
+        Args:
+            psi0: Nx1 csr matrix, dtype = complex128
+                input state.
+            t: dtype = float
+        '''
+        if t != self.t_old:
+            self.Lpsis = [L.dot(psi) for L in self.Ls]
+            self.ls = [Lpsi.dot(psi.conj()) for Lpsi in self.Lpsis]
+            self.t_old = t
+
+    def f(self, psi, t):
+        '''Computes drift f.
+
+        Args:
+            psi0: Nx1 csr matrix, dtype = complex128
+                input state.
+            t: dtype = float
+
+        Returns: array of shape (d,)
+            to define the deterministic part of the system.
+
+        '''
+        self.update_Lpsis_and_ls(psi, t)
+        return (-1j * self.H.dot(psi)
+                - sum([ 0.5*(L.H.dot(Lpsi) + np.conj(l)*l*psi)
+                - np.conj(l)*(Lpsi)
+                    for L,l,Lpsi in zip(self.Ls, self.ls, self.Lpsis)]))
+
+    def G(self, psi, t):
+        '''Computes diffusion G.
+
+        Args:
+            psi0: Nx1 csr matrix, dtype = complex128
+                input state.
+            t: dtype = float
+
+        Returns: returning an array of shape (d, m)
+            to define the noise coefficients of the system.
+
+        '''
+        self.update_Lpsis_and_ls(psi, t)
+        complex_noise = np.vstack([Lpsi - l*psi
+                        for Lpsi, l in zip(self.Lpsis, self.ls)]) / np.sqrt(2.)
+        return np.vstack([complex_noise.real, 1j*complex_noise.imag]).T
 
 def qsd_solve(H, psi0, tspan, Ls, sdeint_method, obsq = None, normalized_equation = True, normalize_state = True, ntraj=1, processes = 8, seed = 1):
     '''
@@ -63,7 +125,6 @@ def qsd_solve(H, psi0, tspan, Ls, sdeint_method, obsq = None, normalized_equatio
         a,b = L.shape
         if a != N or b != N:
             raise ValueError("Every L should have dimensions NxN (same size as psi0).")
-
     ## Determine seeds for the SDEs
     if type(seed) is list or type(seed) is tuple:
         assert len(seed) == ntraj
@@ -73,63 +134,33 @@ def qsd_solve(H, psi0, tspan, Ls, sdeint_method, obsq = None, normalized_equatio
         seeds = [np.random.randint(1000000) for _ in range(ntraj)]
     else:
         raise ValueError("Unknown seed type.")
-
-    T_init = time()
-
-    '''
-    We include a way to update L*psi and l = <psi,L,psi> when t changes.
-    This makes the code somewhat more efficient since these values are used
-    both for the drift f and the diffusion G terms.
-    '''
-    global t_old
-    global Lpsis
-    global ls
-    t_old = min(tspan) - 1.
-    def update_Lpsis_and_ls(psi,t):
-        global t_old
-        global Lpsis
-        global ls
-        if t != t_old:
-            Lpsis = [L.dot(psi) for L in Ls]
-            ls = [Lpsi.dot(psi.conj()) for Lpsi in Lpsis]
-            t_old = t
-
-    if normalized_equation: ## We'll include an option for non-normalized equations later...
-        def f(psi,t):
-            update_Lpsis_and_ls(psi,t)
-            return (-1j * H.dot(psi)
-                    - sum([ 0.5*(L.H.dot(Lpsi) + np.conj(l)*l*psi)
-                    - np.conj(l)*(Lpsi) for L,l,Lpsi in zip(Ls,ls,Lpsis)]) )
-        def G(psi,t):
-            update_Lpsis_and_ls(psi,t)
-            complex_noise = np.vstack([Lpsi - l*psi
-                            for Lpsi,l in zip(Lpsis,ls)]) / np.sqrt(2.)
-            return np.vstack([complex_noise.real, 1j*complex_noise.imag]).T
-    else:
+    ## TODO: Implement the non-normalized equation
+    if not normalized_equation:
         raise ValueError("Case normalized == False is not implemented.")
 
+    T_init = time()
     psi0_arr = np.asarray(psi0.todense()).T[0]
+    drift_diffusion = drift_diffusion_holder(H, Ls, tspan)
 
-    # '''single processing'''
-    # psis = np.asarray([ sdeint_method(f,G,psi0_arr,tspan) for _ in range(ntraj)])
+    # '''Generate psis with single processing'''
+    # psis = np.asarray([ sdeint_method(drift_diffusion.f, drift_diffusion.G,
+    #    psi0_arr,tspan) for _ in range(ntraj)])
 
-    '''multiprocessing'''
-    def SDE_helper(args,s):
+    '''Generate psis with multiprocessing'''
+    def SDE_helper(args, s):
         '''Let's make different wiener increments for each trajectory'''
         m = 2 * len(Ls)
         N = len(tspan)-1
         h = (tspan[N-1] - tspan[0])/(N - 1)
         np.random.seed(s)
         dW = np.random.normal(0.0, np.sqrt(h), (N, m))
-        return sdeint_method(*args,dW=dW,normalized=normalize_state)
-
+        return sdeint_method(*args, dW=dW, normalized=normalize_state)
     pool = Pool(processes=processes,)
-    params = [[f,G,psi0_arr,tspan]] * ntraj
-
-    psis = np.asarray(pool.map( lambda z: SDE_helper(z[0],z[1]), zip(params,seeds) ))
+    params = [[drift_diffusion.f, drift_diffusion.G, psi0_arr, tspan]] * ntraj
+    psis = np.asarray(pool.map(lambda z: SDE_helper(z[0], z[1]),
+        zip(params, seeds)))
 
     ## Obtaining expectations of observables
-    ## maybe there is a more efficient way to do this, but for now it's OK
     obsq_expects = (np.asarray([[ np.asarray([ob.dot(psi).dot(psi.conj())
                         for ob in obsq])
                             for psi in psis[i] ] for i in range(ntraj)])
@@ -137,7 +168,6 @@ def qsd_solve(H, psi0, tspan, Ls, sdeint_method, obsq = None, normalized_equatio
 
     T_fin = time()
     print ("Run time:  ", T_fin - T_init, " seconds.")
-
     return {"psis":psis, "obsq_expects":obsq_expects, "seeds":seeds}
 
 if __name__ == "__main__":
@@ -145,19 +175,23 @@ if __name__ == "__main__":
     psi0 = sparse.csr_matrix(([0,0,0,0,0,0,0,1.]),dtype=np.complex128).T
     H = sparse.csr_matrix(np.eye(8),dtype=np.complex128)
     Ls = [sparse.csr_matrix( np.diag([np.sqrt(i) for i in range(1,8)],k=1),dtype=np.complex128)]
-    tspan = np.linspace(0,10.0,1000)
+    tspan = np.linspace(0, 10.0, 1000)
     obsq = [sparse.csr_matrix(np.diag([i for i in range(4)]*2),dtype=np.complex128)]
 
-    ntraj = 5
+    ntraj = 15
 
     D = qsd_solve(H, psi0, tspan, Ls, sdeint.itoSRI2, obsq = obsq, ntraj = ntraj, normalize_state = True )
 
     psis = D["psis"]
     obsq_expects = D["obsq_expects"]
 
-    print ("Last point of traj 0: ",psis[0][-1])
-    print ("Norm of last point in traj 0: ",la.norm(psis[0][-1]))  ## should be close to 1...
+    print ("Last point of traj 0: ", psis[0][-1])
+    print ("Norm of last point in traj 0: ", la.norm(psis[0][-1]))  ## should be close to 1...
 
     for i in range(ntraj):
-        plt.plot(tspan,obsq_expects[i,:,0])
+        plt.plot(tspan, obsq_expects[i,:,0].real,  linewidth=0.3)
+
+    ave_traj = np.average(np.array([obsq_expects[i,:,0].real
+        for i in range(ntraj)]), axis=0)
+    plt.plot(tspan, ave_traj, color='k',  linewidth=2.0)
     plt.show()

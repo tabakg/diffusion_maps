@@ -29,15 +29,24 @@ class drift_diffusion_holder(object):
     both for the drift f and the diffusion G terms, and don't have to be
     recomputed each time.
     '''
-    def __init__(self, H, Ls, t_span):
+    def __init__(self, H, Ls, t_span, normalized_equation=True):
         self.t_old = min(tspan) - 1.
         self.H = H
         self.Ls = Ls
         self.Lpsis = None
         self.ls = None
+        if normalized_equation:
+            self.f = self.f_normalized
+            self.G = self.G_normalized
+        else:
+            self.f = self.f_non_normalized
+            self.G = self.G_non_normalized
 
     def update_Lpsis_and_ls(self, psi, t):
         '''Updates Lpsis and ls.
+
+        If t is different than t_old, update Lpsis, ls, and t_old.
+        Otherwise, do nothing.
 
         Args:
             psi0: Nx1 csr matrix, dtype = complex128
@@ -46,10 +55,10 @@ class drift_diffusion_holder(object):
         '''
         if t != self.t_old:
             self.Lpsis = [L.dot(psi) for L in self.Ls]
-            self.ls = [Lpsi.dot(psi.conj()) for Lpsi in self.Lpsis]
+            self.ls = [Lpsi.dot(psi.conj()) / (psi.dot(psi.conj())) for Lpsi in self.Lpsis]
             self.t_old = t
 
-    def f(self, psi, t):
+    def f_normalized(self, psi, t):
         '''Computes drift f.
 
         Args:
@@ -67,7 +76,7 @@ class drift_diffusion_holder(object):
                 - np.conj(l)*(Lpsi)
                     for L,l,Lpsi in zip(self.Ls, self.ls, self.Lpsis)]))
 
-    def G(self, psi, t):
+    def G_normalized(self, psi, t):
         '''Computes diffusion G.
 
         Args:
@@ -84,7 +93,49 @@ class drift_diffusion_holder(object):
                         for Lpsi, l in zip(self.Lpsis, self.ls)]) / np.sqrt(2.)
         return np.vstack([complex_noise.real, 1j*complex_noise.imag]).T
 
-def qsd_solve(H, psi0, tspan, Ls, sdeint_method, obsq = None, normalized_equation = True, normalize_state = True, ntraj=1, processes = 8, seed = 1):
+    def f_non_normalized(self, psi, t):
+        '''Computes drift f.
+
+        Args:
+            psi0: Nx1 csr matrix, dtype = complex128
+                input state.
+            t: dtype = float
+
+        Returns: array of shape (d,)
+            to define the deterministic part of the system.
+
+        '''
+        self.update_Lpsis_and_ls(psi, t)
+        return (-1j * self.H.dot(psi)
+                - sum([ 0.5*(L.H.dot(Lpsi)) - np.conj(l)*(Lpsi)
+                    for L,l,Lpsi in zip(self.Ls, self.ls, self.Lpsis)]))
+    def G_non_normalized(self, psi, t):
+        '''Computes diffusion G.
+
+        Args:
+            psi0: Nx1 csr matrix, dtype = complex128
+                input state.
+            t: dtype = float
+
+        Returns: returning an array of shape (d, m)
+            to define the noise coefficients of the system.
+
+        '''
+        self.update_Lpsis_and_ls(psi, t)
+        complex_noise = np.vstack(self.Lpsis) / np.sqrt(2.)
+        return np.vstack([complex_noise.real, 1j*complex_noise.imag]).T
+
+def qsd_solve(H,
+              psi0,
+              tspan,
+              Ls,
+              sdeint_method,
+              obsq=None,
+              normalized_equation=True,
+              normalize_state=True,
+              ntraj=1,
+              processes=8,
+              seed=1):
     '''
     Args:
         H: NxN csr matrix, dtype = complex128
@@ -100,12 +151,16 @@ def qsd_solve(H, psi0, tspan, Ls, sdeint_method, obsq = None, normalized_equatio
         obsq (optional): list of NxN csr matrices, dtype = complex128
             Observables for which to generate trajectory information.
             Default value is None (no observables).
-        normalized (optional): Boolean
+        normalized_equation (optional): Boolean
             Use the normalized quantum state diffusion equations. (TODO: case False)
+        normalize_state (optional): Boolean
+            Whether to numerically normalize the equation at each step.
         ntraj (optional): int
             number of trajectories.
         processes (optional): int
             number of processes. If processes == 1, don't use multiprocessing.
+        seed (optional): int
+            Seed for random noise.
 
     Returns:
         A dictionary with the following keys and values:
@@ -134,9 +189,6 @@ def qsd_solve(H, psi0, tspan, Ls, sdeint_method, obsq = None, normalized_equatio
         seeds = [np.random.randint(1000000) for _ in range(ntraj)]
     else:
         raise ValueError("Unknown seed type.")
-    ## TODO: Implement the non-normalized equation
-    if not normalized_equation:
-        raise ValueError("Case normalized == False is not implemented.")
 
     T_init = time()
     psi0_arr = np.asarray(psi0.todense()).T[0]
@@ -161,7 +213,7 @@ def qsd_solve(H, psi0, tspan, Ls, sdeint_method, obsq = None, normalized_equatio
         zip(params, seeds)))
 
     ## Obtaining expectations of observables
-    obsq_expects = (np.asarray([[ np.asarray([ob.dot(psi).dot(psi.conj())
+    obsq_expects = (np.asarray([[ np.asarray([ob.dot(psi).dot(psi.conj()) / (psi.dot(psi.conj()))
                         for ob in obsq])
                             for psi in psis[i] ] for i in range(ntraj)])
                                 if not obsq is None else None)
@@ -178,9 +230,9 @@ if __name__ == "__main__":
     tspan = np.linspace(0, 10.0, 1000)
     obsq = [sparse.csr_matrix(np.diag([i for i in range(4)]*2),dtype=np.complex128)]
 
-    ntraj = 15
+    ntraj = 10
 
-    D = qsd_solve(H, psi0, tspan, Ls, sdeint.itoSRI2, obsq = obsq, ntraj = ntraj, normalize_state = True )
+    D = qsd_solve(H, psi0, tspan, Ls, sdeint.itoSRI2, obsq = obsq, ntraj = ntraj, normalized_equation=True, normalize_state=True)
 
     psis = D["psis"]
     obsq_expects = D["obsq_expects"]

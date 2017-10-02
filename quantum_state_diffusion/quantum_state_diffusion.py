@@ -29,7 +29,7 @@ class drift_diffusion_holder(object):
     both for the drift f and the diffusion G terms, and don't have to be
     recomputed each time.
     '''
-    def __init__(self, H, Ls, t_span, normalized_equation=True):
+    def __init__(self, H, Ls, tspan, normalized_equation=True):
         self.t_old = min(tspan) - 1.
         self.H = H
         self.Ls = Ls
@@ -55,7 +55,7 @@ class drift_diffusion_holder(object):
         '''
         if t != self.t_old:
             self.Lpsis = [L.dot(psi) for L in self.Ls]
-            self.ls = [Lpsi.dot(psi.conj()) / (psi.dot(psi.conj())) for Lpsi in self.Lpsis]
+            self.ls = [Lpsi.dot(psi.conj()) for Lpsi in self.Lpsis]
             self.t_old = t
 
     def f_normalized(self, psi, t):
@@ -109,6 +109,7 @@ class drift_diffusion_holder(object):
         return (-1j * self.H.dot(psi)
                 - sum([ 0.5*(L.H.dot(Lpsi)) - np.conj(l)*(Lpsi)
                     for L,l,Lpsi in zip(self.Ls, self.ls, self.Lpsis)]))
+
     def G_non_normalized(self, psi, t):
         '''Computes diffusion G.
 
@@ -213,7 +214,7 @@ def qsd_solve(H,
         zip(params, seeds)))
 
     ## Obtaining expectations of observables
-    obsq_expects = (np.asarray([[ np.asarray([ob.dot(psi).dot(psi.conj()) / (psi.dot(psi.conj()))
+    obsq_expects = (np.asarray([[ np.asarray([ob.dot(psi).dot(psi.conj())
                         for ob in obsq])
                             for psi in psis[i] ] for i in range(ntraj)])
                                 if not obsq is None else None)
@@ -227,12 +228,12 @@ if __name__ == "__main__":
     psi0 = sparse.csr_matrix(([0,0,0,0,0,0,0,1.]),dtype=np.complex128).T
     H = sparse.csr_matrix(np.eye(8),dtype=np.complex128)
     Ls = [sparse.csr_matrix( np.diag([np.sqrt(i) for i in range(1,8)],k=1),dtype=np.complex128)]
-    tspan = np.linspace(0, 10.0, 1000)
-    obsq = [sparse.csr_matrix(np.diag([i for i in range(4)]*2),dtype=np.complex128)]
+    tspan = np.linspace(0, 10.0, 3000)
+    obsq = [sparse.csr_matrix(np.diag([i for i in range(4)]*2), dtype=np.complex128)]
 
     ntraj = 10
 
-    D = qsd_solve(H, psi0, tspan, Ls, sdeint.itoSRI2, obsq = obsq, ntraj = ntraj, normalized_equation=True, normalize_state=True)
+    D = qsd_solve(H, psi0, tspan, Ls, sdeint.itoSRI2, obsq = obsq, ntraj = ntraj, normalized_equation=False, normalize_state=True)
 
     psis = D["psis"]
     obsq_expects = D["obsq_expects"]

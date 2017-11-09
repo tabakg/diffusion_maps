@@ -22,12 +22,61 @@ import matplotlib as mil
 mil.use('TkAgg')
 import matplotlib.pyplot as plt
 
+def complex_to_real_vector(f):
+    """
+    Generates a vector-valued function taking and returning
+    real values instead of complex values.
+
+    Args:
+        f: function sending (psi, t) -> psi_out
+            Here psi and psi_out are complex valued arrays of dimension (d,)
+    Returns:
+        tilde_f : function sending (x, t) -> x_out
+            Here x and x_out are real valued arrays of dimension (2d,)
+    """
+    def tilde_f(x, t):
+        psi = x[:int(len(x)/2)] + 1j*x[int(len(x)/2):]
+        f_val = f(psi, t)
+        return np.concatenate([f_val.real, f_val.imag])
+    return tilde_f
+
+
+def complex_to_real_matrix(G):
+    """
+    Generates a matrix-valued function taking and returning
+    real values instead of complex values.
+
+    Args:
+        G: function sending (psi, t) -> M
+            Here psi is a complex-valued array of dimension (d,)
+            M is a complex-value array of dimension (d,m)
+    Returns:
+        tilde_G : function sending (x, t) -> M_out
+            Here x and is a real valued array of dimension (2d,)
+            M is a real-value array of dimension (2d,2m)
+    """
+    def tilde_G(x, t):
+        psi = x[:int(len(x)/2)] + 1j*x[int(len(x)/2):]
+        G_val = G(psi, t)
+        return np.vstack([np.hstack([G_val.real, -G_val.imag]),
+                          np.hstack([G_val.imag, G_val.real])])
+    return tilde_G
+
+
 class drift_diffusion_holder(object):
     '''
     We include a way to update L*psi and l = <psi,L,psi> when t changes.
     This makes the code somewhat more efficient since these values are used
     both for the drift f and the diffusion G terms, and don't have to be
     recomputed each time.
+
+    Each psi used as an input should be a complex-valued array of length (d,)
+
+    The outputs generated f and G are complex-valued arrays of dimensions
+    (d,) and (d,m), respectively.
+
+    d: complex-valued dimension of the space
+    m: number of complex-valued noise terms.
     '''
     def __init__(self, H, Ls, tspan, normalized_equation=True):
         self.t_old = min(tspan) - 1.
@@ -89,9 +138,8 @@ class drift_diffusion_holder(object):
 
         '''
         self.update_Lpsis_and_ls(psi, t)
-        complex_noise = np.vstack([Lpsi - l*psi
-                        for Lpsi, l in zip(self.Lpsis, self.ls)]) / np.sqrt(2.)
-        return np.vstack([complex_noise.real, 1j*complex_noise.imag]).T
+        return np.vstack([Lpsi - l*psi
+            for Lpsi, l in zip(self.Lpsis, self.ls)]).T
 
     def f_non_normalized(self, psi, t):
         '''Computes drift f.
@@ -123,8 +171,7 @@ class drift_diffusion_holder(object):
 
         '''
         self.update_Lpsis_and_ls(psi, t)
-        complex_noise = np.vstack(self.Lpsis) / np.sqrt(2.)
-        return np.vstack([complex_noise.real, 1j*complex_noise.imag]).T
+        return np.vstack(self.Lpsis).T
 
 def qsd_solve(H,
               psi0,
@@ -193,11 +240,15 @@ def qsd_solve(H,
 
     T_init = time()
     psi0_arr = np.asarray(psi0.todense()).T[0]
+    x0 = np.concatenate([psi0_arr.real, psi0_arr.imag])
     drift_diffusion = drift_diffusion_holder(H, Ls, tspan)
 
+    f = complex_to_real_vector(drift_diffusion.f)
+    G = complex_to_real_matrix(drift_diffusion.G)
+
     # '''Generate psis with single processing'''
-    # psis = np.asarray([ sdeint_method(drift_diffusion.f, drift_diffusion.G,
-    #    psi0_arr,tspan) for _ in range(ntraj)])
+    # psis = np.asarray([ sdeint_method(f, G,
+    #    x0,tspan) for _ in range(ntraj)])
 
     '''Generate psis with multiprocessing'''
     def SDE_helper(args, s):
@@ -206,12 +257,14 @@ def qsd_solve(H,
         N = len(tspan)-1
         h = (tspan[N-1] - tspan[0])/(N - 1)
         np.random.seed(s)
-        dW = np.random.normal(0.0, np.sqrt(h), (N, m))
+        dW = np.random.normal(0.0, np.sqrt(h), (N, m)) / np.sqrt(2.)
         return sdeint_method(*args, dW=dW, normalized=normalize_state)
     pool = Pool(processes=processes,)
-    params = [[drift_diffusion.f, drift_diffusion.G, psi0_arr, tspan]] * ntraj
-    psis = np.asarray(pool.map(lambda z: SDE_helper(z[0], z[1]),
+    params = [[f, G, x0, tspan]] * ntraj
+    xs = np.asarray(pool.map(lambda z: SDE_helper(z[0], z[1]),
         zip(params, seeds)))
+
+    psis = xs[:,:,:int(len(x0)/2)] + 1j * xs[:,:,int(len(x0)/2):]
 
     ## Obtaining expectations of observables
     obsq_expects = (np.asarray([[ np.asarray([ob.dot(psi).dot(psi.conj())
@@ -231,7 +284,7 @@ if __name__ == "__main__":
     tspan = np.linspace(0, 10.0, 3000)
     obsq = [sparse.csr_matrix(np.diag([i for i in range(4)]*2), dtype=np.complex128)]
 
-    ntraj = 10
+    ntraj = 50
 
     D = qsd_solve(H, psi0, tspan, Ls, sdeint.itoSRI2, obsq = obsq, ntraj = ntraj, normalized_equation=False, normalize_state=True)
 

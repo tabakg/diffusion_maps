@@ -436,15 +436,18 @@ class drift_diffusion_two_systems_holder(object):
     d: complex-valued dimension of the space
     m: number of complex-valued noise terms.
     '''
-    def __init__(self, H1, H2, L1s, L2s, R, eps, tspan,
+    def __init__(self, H1, H2, L1s, L2s, R, eps, tspan, trans_phase=None,
                  ops_on_whole_space = False):
         self.t_old = min(tspan) - 1.
 
         assert 0 <= R <= 1
-        assert 0 <= eps <= 1
         self.R = R
         self.T = np.sqrt(1 - R**2)
         self.eps = eps
+
+        if trans_phase is not None:
+            self.eps *= trans_phase
+            self.T *= trans_phase
 
         self.H1, self.H2, self.L1s, self.L2s = preprocess_operators(
             H1, H2, L1s, L2s, ops_on_whole_space)
@@ -569,6 +572,7 @@ def qsd_solve_two_systems(H1,
                           R,
                           eps,
                           sdeint_method,
+                          trans_phase=None,
                           obsq=None,
                           normalize_state=True,
                           ops_on_whole_space = False,
@@ -638,8 +642,8 @@ def qsd_solve_two_systems(H1,
     psi0_arr = np.asarray(psi0.todense()).T[0]
     x0 = np.concatenate([psi0_arr.real, psi0_arr.imag])
     drift_diffusion = drift_diffusion_two_systems_holder(
-        H1, H2, L1s, L2s, R, eps, tspan,
-        ops_on_whole_space = ops_on_whole_space)
+        H1, H2, L1s, L2s, R, eps, tspan, trans_phase=trans_phase,
+        ops_on_whole_space=ops_on_whole_space)
 
     f = complex_to_real_vector(drift_diffusion.f_normalized)
     G = complex_to_real_matrix(drift_diffusion.G_normalized)

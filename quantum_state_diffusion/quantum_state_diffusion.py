@@ -22,6 +22,10 @@ import matplotlib as mil
 mil.use('TkAgg')
 import matplotlib.pyplot as plt
 
+################################################################################
+#### Conversion between real and complex-valued terms
+################################################################################
+
 def complex_to_real_vector(f):
     """
     Generates a vector-valued function taking and returning
@@ -61,6 +65,10 @@ def complex_to_real_matrix(G):
         return np.vstack([np.hstack([G_val.real, -G_val.imag]),
                           np.hstack([G_val.imag, G_val.real])])
     return tilde_G
+
+################################################################################
+#### One system below
+################################################################################
 
 
 class drift_diffusion_holder(object):
@@ -267,6 +275,395 @@ def qsd_solve(H,
     psis = xs[:,:,:int(len(x0)/2)] + 1j * xs[:,:,int(len(x0)/2):]
 
     ## Obtaining expectations of observables
+    obsq_expects = (np.asarray([[ np.asarray([ob.dot(psi).dot(psi.conj())
+                        for ob in obsq])
+                            for psi in psis[i] ] for i in range(ntraj)])
+                                if not obsq is None else None)
+
+    T_fin = time()
+    print ("Run time:  ", T_fin - T_init, " seconds.")
+    return {"psis":psis, "obsq_expects":obsq_expects, "seeds":seeds}
+
+################################################################################
+#### Two systems below
+################################################################################
+
+def individual_term(H, Ls, ls, Lpsis, psi):
+    """Generates the drift term for each individual component.
+
+    Args:
+        H: square matrix
+            Hamiltonian matrix
+        Ls: list of square matrices
+            Lindblad matrices
+        ls: list of complex values
+            expectations of Lindblad matrices
+        Lpsis: list of complex-valued vectors
+            L matrices dotted with psi
+        psi: complex-values vector
+            the state psi
+
+    Returns: complex-valued vector
+        term in SDE for individual component
+    """
+    return (-1j * H.dot(psi)
+            - sum([0.5 * (L.H.dot(Lpsi) + np.conj(l)*l*psi) - np.conj(l)*(Lpsi)
+                   for L, l, Lpsi in zip(Ls, ls, Lpsis)]))
+
+def classical_trans(L2, l1, l2, L2psi, psi):
+    """classical transmission term for SDE.
+
+    Assumes heterodyne detection of system 1 via operator L1
+    to system 2 with operator L2.
+
+    Args:
+        L2: square matrix
+            Lindblad operator
+        l1: complex value
+            expectation of l1
+        l2: complex value
+            expectation of l2
+        L2psi: complex-valued vector
+            L2 dotted with psi
+        psi: complex-values vector
+            the state psi
+
+    Returns: complex-valued vector
+        term in SDE for classical transmission
+
+    """
+    return (-L2.H.dot(psi)*l1 + L2psi*np.conj(l1)
+            + 0.5 * (l1*np.conj(l2) - np.conj(l1)*l2)*psi)
+
+def quantum_trans(L2, l1, l2, L1psi, L2psi, psi):
+    """classical transmission term for SDE.
+
+    Assumes heterodyne detection of system 1 via operator L1
+    to system 2 with operator L2.
+
+    Args:
+        L2: square matrix
+            Lindblad operator
+        l1: complex value
+            expectation of l1
+        l2: complex value
+            expectation of l2
+        L1psi: complex-valued vector
+            L2 dotted with psi
+        L2psi: complex-valued vector
+            L2 dotted with psi
+        psi: complex-values vector
+            the state psi
+
+    Returns: complex-valued vector
+        term in SDE for coherent transmission
+
+    """
+    return (-L2.H.dot(L1psi) + L2psi*np.conj(l1) + L1psi*np.conj(l2)
+            - 0.5*(l1*np.conj(l2) + np.conj(l1)*l2)*psi)
+
+def dim_check(H, Ls):
+    """Make sure the dimensions match.
+
+    Args:
+        H (possibly sparse matrix)
+        Ls (list of possibly sparse matrices)
+
+    Ensures that H and each L in Ls is a square
+    matrix of the same size.
+    """
+    N = H.shape[0]
+    assert H.shape == (N, N)
+    assert all(L.shape == (N, N) for L in Ls)
+    return N
+
+def preprocess_operators(H1, H2, L1s, L2s, ops_on_whole_space):
+    """Make sure operators are defined over the entire space.
+
+    First, check that all dimensions match. Then return either the given
+    operators, or extend them so that they are defined on the Kronecker product
+    Hilbert space.
+
+    Args:
+        H1: square matrix
+            Hamiltonian matrix of system 1
+        H2: square matrix
+            Hamiltonian matrix of system 2
+        L1s: list of square matrices
+            Lindblad matrices of system 1
+        L2s: list of square matrices
+            Lindblad matrices of system 2
+        ops_on_whole_space: boolean
+            whether the given operators are defined on the whole space
+
+    Returns: H1, H2, L1s, L2s
+        Operators extended to whole space if necessary
+    """
+    N1 = dim_check(H1, L1s)
+    N2 = dim_check(H2, L2s)
+
+    if ops_on_whole_space:
+        assert(N1 == N2)
+        return H1, H2, L1s, L2s
+    else:
+        I1 = np.eye(N1)
+        I2 = np.eye(N2)
+        H1 = sparse.csr_matrix(np.kron(H1.todense(), I2))
+        H2 = sparse.csr_matrix(np.kron(I1, H2.todense()))
+        L1s = [sparse.csr_matrix(np.kron(L1.todense(), I2)) for L1 in L1s]
+        L2s = [sparse.csr_matrix(np.kron(I1, L2.todense())) for L2 in L2s]
+        return H1, H2, L1s, L2s
+
+class drift_diffusion_two_systems_holder(object):
+    '''
+    This object is used to generate the equation of motion of two systems,
+    where transmission from system 1 to system 2 occurs via both a classical
+    as well as a quantum channel. Here this is assumed to be done by splitting
+    the output of system 1 with a beamsplitter, and making a heterodyne
+    measurement on one of the outputs. The second output is then displaced by
+    the measured state.
+
+    We include a way to update L*psi and l = <psi,L,psi> when t changes.
+    This makes the code somewhat more efficient since these values are used
+    both for the drift f and the diffusion G terms, and don't have to be
+    recomputed each time.
+
+    Each psi used as an input should be a complex-valued array of length (d,)
+
+    The outputs generated f and G are complex-valued arrays of dimensions
+    (d,) and (d,m), respectively.
+
+    d: complex-valued dimension of the space
+    m: number of complex-valued noise terms.
+    '''
+    def __init__(self, H1, H2, L1s, L2s, R, eps, tspan,
+                 ops_on_whole_space = False):
+        self.t_old = min(tspan) - 1.
+
+        assert 0 <= R <= 1
+        assert 0 <= eps <= 1
+        self.R = R
+        self.T = np.sqrt(1 - R**2)
+        self.eps = eps
+
+        self.H1, self.H2, self.L1s, self.L2s = preprocess_operators(
+            H1, H2, L1s, L2s, ops_on_whole_space)
+
+        print ("done preparing operators...")
+
+        self.L1psis = None
+        self.L2psis = None
+        self.l1s = None
+        self.l2s = None
+
+    def update_Lpsis_and_ls(self, psi, t):
+        '''Updates Lpsis and ls.
+
+        If t is different than t_old, update Lpsis, ls, and t_old.
+        Otherwise, do nothing.
+
+        Args:
+            psi0: Nx1 csr matrix, dtype = complex128
+                input state.
+            t: dtype = float
+        '''
+        if t != self.t_old:
+            self.L1psis = [L1.dot(psi) for L1 in self.L1s]
+            self.L2psis = [L2.dot(psi) for L2 in self.L2s]
+            self.l1s = [L1psi.dot(psi.conj()) for L1psi in self.L1psis]
+            self.l2s = [L2psi.dot(psi.conj()) for L2psi in self.L2psis]
+            self.t_old = t
+
+    def f_normalized(self, psi, t):
+        '''Computes drift f.
+
+        Assumes two systems. Computes an individual term for each,
+        as well as a classical transmission and a quantum transmission term.
+
+        Args:
+            psi0: Nx1 csr matrix, dtype = complex128
+                input state.
+            t: dtype = float
+
+        Returns: array of shape (d,)
+            to define the deterministic part of the system.
+
+        '''
+        self.update_Lpsis_and_ls(psi, t)
+
+        return (individual_term(self.H1, self.L1s, self.l1s, self.L1psis, psi)
+            + individual_term(self.H2, self.L2s, self.l2s, self.L2psis, psi)
+            + self.eps * self.R * classical_trans(
+                self.L2s[0], self.l1s[0], self.l2s[0], self.L2psis[0], psi)
+            + self.T * quantum_trans(
+                self.L2s[0], self.l1s[0], self.l2s[0], self.L1psis[0], self.L2psis[0], psi)
+               )
+
+    def G_normalized(self, psi, t):
+        '''Computes diffusion G.
+
+        Because of the measurement feedback, we require an additional
+        noise term dW_2^*. So instead of the noise terms we would expect
+        with a total of N ports, [dW_1, ..., dW_m]^T, the appropriate noise
+        to use for this term are [dW_1, dW_2, dW_2^*, dW_3, ..., dW_m]^T
+        (note: There are a total of m+1 noise terms!). If we decompose
+        this term into real in imaginary components, the noise terms to
+        use will have form:
+
+            [Re(dW_1), Re(dW_2), +Re(dW_2), Re(dW_3), ..., Re(dW_m),
+             Im(dW_1), Im(dW_2), -Im(dW_2), Im(dW_3), ..., Im(dW_m)]^T.
+
+        Args:
+            psi0: Nx1 csr matrix, dtype = complex128
+                input state.
+            t: dtype = float
+
+        Returns: returning an array of shape (d, m)
+            to define the noise coefficients of the system.
+
+        '''
+        self.update_Lpsis_and_ls(psi, t)
+        L1_cent = [L1psi - l1*psi for L1psi,l1 in zip(self.L1psis, self.l1s)]
+        L2_cent = [L2psi - l2*psi for L2psi,l2 in zip(self.L2psis, self.l2s)]
+        N1 = self.T*L1_cent[0] + L2_cent[0]
+        N2 = self.eps*(0.5*(self.T*np.conj(self.l1s[0])
+                            + np.conj(self.l2s[0])) * psi
+                       - self.L2s[0].H.dot(psi) )
+        N2_conj = -np.conj(N2) + self.R * L1_cent[0]
+        return np.vstack([N1, N2, N2_conj]
+                         + L1_cent[1:] + L2_cent[1:]).T
+
+def insert_conj(dW, port=1):
+    """Insert a conjugate noise term to channel `port'.
+
+    the dW is an Nxm term of real-valued noise, where N
+    is the t-span and m is twice number of physical channels.
+    When measurement feedback occurs, we must sometimes
+    include conjugate noise terms (e.g. both dW_j and dW_j^*).
+    This can be done by including an extra channel with redundant
+    information, which is done here.
+
+    Args:
+        dW: Nxm array
+            Noise for the real and imaginary components of channels
+        port: int
+            which port should have its conjugate inserted.
+            Note: the conjugate port is inserted immediately after
+            the original port.
+
+    """
+    dW_real, dW_imag = np.split(dW.T, 2)
+    return np.concatenate([np.concatenate([dW_real[:(1+port)],
+                                    [dW_real[port]],
+                                    dW_real[(1+port):]]),
+                    np.concatenate([dW_imag[:(1+port)],
+                                    [-dW_imag[port]],
+                                    dW_imag[(1+port):]])]).T
+
+def qsd_solve_two_systems(H1,
+                          H2,
+                          psi0,
+                          tspan,
+                          L1s,
+                          L2s,
+                          R,
+                          eps,
+                          sdeint_method,
+                          obsq=None,
+                          normalize_state=True,
+                          ops_on_whole_space = False,
+                          ntraj=1,
+                          processes=8,
+                          seed=1):
+    '''
+    Args:
+        H1: N1xN1 csr matrix, dtype = complex128
+            Hamiltonian for system 1.
+        H2: N2xN2 csr matrix, dtype = complex128
+            Hamiltonian for system 2.
+        psi0: Nx1 csr matrix, dtype = complex128
+            input state.
+        tspan: numpy array, dtype = float
+            Time series of some length T.
+        L1s: list of N1xN1 csr matrices, dtype = complex128
+            System-environment interaction terms (Lindblad terms) for system 1.
+        L2s: list of N2xN2 csr matrices, dtype = complex128
+            System-environment interaction terms (Lindblad terms) for system 2.
+        R: float
+            reflectivity used to separate the classical versus coherent
+            transmission
+        eps: float
+            The multiplier by which the classical state displaces the coherent
+            state
+        sdeint_method (Optional) SDE solver method:
+            Which SDE solver to use. Default is sdeint.itoSRI2.
+        obsq (optional): list of NxN csr matrices, dtype = complex128
+            Observables for which to generate trajectory information.
+            Default value is None (no observables).
+        normalize_state (optional): Boolean
+            Whether to numerically normalize the equation at each step.
+        ops_on_whole_space (optional): Boolean
+            whether the Given L and H operators have been defined on the whole
+            space or individual subspaces.
+        ntraj (optional): int
+            number of trajectories.
+        processes (optional): int
+            number of processes. If processes == 1, don't use multiprocessing.
+        seed (optional): int
+            Seed for random noise.
+
+    Returns:
+        A dictionary with the following keys and values:
+            ['psis'] -> np.array with shape = (ntraj,T,N) and dtype = complex128
+            ['obsq_expects'] -> np.array with shape = (ntraj,T,len(obsq)) and dtype = complex128
+
+    '''
+
+    ## Check dimensions of inputs. These should be consistent with qutip Qobj.data.
+    N = psi0.shape[0]
+    if psi0.shape[1] != 1:
+        raise ValueError("psi0 should have dimensions Nx1.")
+
+    ## Determine seeds for the SDEs
+    if type(seed) is list or type(seed) is tuple:
+        assert len(seed) == ntraj
+        seeds = seed
+    elif type(seed) is int or seed is None:
+        np.random.seed(seed)
+        seeds = [np.random.randint(1000000) for _ in range(ntraj)]
+    else:
+        raise ValueError("Unknown seed type.")
+
+    T_init = time()
+    psi0_arr = np.asarray(psi0.todense()).T[0]
+    x0 = np.concatenate([psi0_arr.real, psi0_arr.imag])
+    drift_diffusion = drift_diffusion_two_systems_holder(
+        H1, H2, L1s, L2s, R, eps, tspan,
+        ops_on_whole_space = ops_on_whole_space)
+
+    f = complex_to_real_vector(drift_diffusion.f_normalized)
+    G = complex_to_real_matrix(drift_diffusion.G_normalized)
+
+    '''Generate psis with multiprocessing'''
+    def SDE_helper(args, s):
+        '''Let's make different wiener increments for each trajectory'''
+        m = 2 * (len(L1s) + len(L2s))
+        N = len(tspan)-1
+        h = (tspan[N-1] - tspan[0])/(N - 1)
+        np.random.seed(s)
+        dW = np.random.normal(0.0, np.sqrt(h), (N, m)) / np.sqrt(2.)
+        dW_with_conj = insert_conj(dW, port=1)
+        return sdeint_method(*args, dW=dW_with_conj, normalized=normalize_state)
+    pool = Pool(processes=processes,)
+    params = [[f, G, x0, tspan]] * ntraj
+    xs = np.asarray(pool.map(lambda z: SDE_helper(z[0], z[1]),
+        zip(params, seeds)))
+
+    print ("done running simulation!")
+
+    psis = xs[:,:,:int(len(x0)/2)] + 1j * xs[:,:,int(len(x0)/2):]
+
+    # Obtaining expectations of observables
     obsq_expects = (np.asarray([[ np.asarray([ob.dot(psi).dot(psi.conj())
                         for ob in obsq])
                             for psi in psis[i] ] for i in range(ntraj)])

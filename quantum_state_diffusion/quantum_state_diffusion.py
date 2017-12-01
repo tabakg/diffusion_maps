@@ -575,6 +575,7 @@ def qsd_solve_two_systems(H1,
                           trans_phase=None,
                           obsq=None,
                           normalize_state=True,
+                          downsample=1,
                           ops_on_whole_space = False,
                           ntraj=1,
                           processes=8,
@@ -606,6 +607,7 @@ def qsd_solve_two_systems(H1,
             Default value is None (no observables).
         normalize_state (optional): Boolean
             Whether to numerically normalize the equation at each step.
+        downsample: optional, integer to indicate how frequently to save values.
         ops_on_whole_space (optional): Boolean
             whether the Given L and H operators have been defined on the whole
             space or individual subspaces.
@@ -657,7 +659,8 @@ def qsd_solve_two_systems(H1,
         np.random.seed(s)
         dW = np.random.normal(0.0, np.sqrt(h), (N, m)) / np.sqrt(2.)
         dW_with_conj = insert_conj(dW, port=1)
-        return sdeint_method(*args, dW=dW_with_conj, normalized=normalize_state)
+        return sdeint_method(*args, dW=dW_with_conj,
+            normalized=normalize_state, downsample=downsample)
     pool = Pool(processes=processes,)
     params = [[f, G, x0, tspan]] * ntraj
     xs = np.asarray(pool.map(lambda z: SDE_helper(z[0], z[1]),

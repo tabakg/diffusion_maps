@@ -189,6 +189,7 @@ def qsd_solve(H,
               obsq=None,
               normalized_equation=True,
               normalize_state=True,
+              multiprocessing = False,
               ntraj=1,
               processes=8,
               seed=1):
@@ -211,6 +212,8 @@ def qsd_solve(H,
             Use the normalized quantum state diffusion equations. (TODO: case False)
         normalize_state (optional): Boolean
             Whether to numerically normalize the equation at each step.
+        multiprocessing (optional): Boolean
+            Whether or not to use multiprocessing
         ntraj (optional): int
             number of trajectories.
         processes (optional): int
@@ -254,11 +257,6 @@ def qsd_solve(H,
     f = complex_to_real_vector(drift_diffusion.f)
     G = complex_to_real_matrix(drift_diffusion.G)
 
-    # '''Generate psis with single processing'''
-    # psis = np.asarray([ sdeint_method(f, G,
-    #    x0,tspan) for _ in range(ntraj)])
-
-    '''Generate psis with multiprocessing'''
     def SDE_helper(args, s):
         '''Let's make different wiener increments for each trajectory'''
         m = 2 * len(Ls)
@@ -267,14 +265,23 @@ def qsd_solve(H,
         np.random.seed(s)
         dW = np.random.normal(0.0, np.sqrt(h), (N, m)) / np.sqrt(2.)
         return sdeint_method(*args, dW=dW, normalized=normalize_state)
-    pool = Pool(processes=processes,)
+
+    ## simulation parameters
     params = [[f, G, x0, tspan]] * ntraj
-    xs = np.asarray(pool.map(lambda z: SDE_helper(z[0], z[1]),
-        zip(params, seeds)))
+
+    if multiprocessing:
+        pool = Pool(processes=processes,)
+        xs = np.asarray(pool.map(lambda z: SDE_helper(z[0], z[1]),
+            zip(params, seeds)))
+    else:
+        xs = np.asarray([
+            SDE_helper(p, s) for p, s in zip(params, seeds)
+            ])
+
 
     psis = xs[:,:,:int(len(x0)/2)] + 1j * xs[:,:,int(len(x0)/2):]
 
-    ## Obtaining expectations of observables
+    # Obtaining expectations of observables
     obsq_expects = (np.asarray([[ np.asarray([ob.dot(psi).dot(psi.conj())
                         for ob in obsq])
                             for psi in psis[i] ] for i in range(ntraj)])
@@ -436,7 +443,7 @@ class drift_diffusion_two_systems_holder(object):
     d: complex-valued dimension of the space
     m: number of complex-valued noise terms.
     '''
-    def __init__(self, H1, H2, L1s, L2s, R, eps, tspan, trans_phase=None,
+    def __init__(self, H1, H2, L1s, L2s, R, eps, n, tspan, trans_phase=None,
                  ops_on_whole_space = False):
         self.t_old = min(tspan) - 1.
 
@@ -444,6 +451,7 @@ class drift_diffusion_two_systems_holder(object):
         self.R = R
         self.T = np.sqrt(1 - R**2)
         self.eps = eps
+        self.n = n
 
         if trans_phase is not None:
             self.eps *= trans_phase
@@ -529,12 +537,12 @@ class drift_diffusion_two_systems_holder(object):
         L1_cent = [L1psi - l1*psi for L1psi,l1 in zip(self.L1psis, self.l1s)]
         L2_cent = [L2psi - l2*psi for L2psi,l2 in zip(self.L2psis, self.l2s)]
         N1 = self.T*L1_cent[0] + L2_cent[0]
-        N2 = self.eps*(0.5*(self.T*np.conj(self.l1s[0])
-                            + np.conj(self.l2s[0])) * psi
-                       - self.L2s[0].H.dot(psi) )
+        N2 = self.n * self.eps * (
+            # 0.5*(self.T*np.conj(self.l1s[0])
+            + np.conj(self.l2s[0]) * psi
+            - self.L2s[0].H.dot(psi) )
         N2_conj = -np.conj(N2) + self.R * L1_cent[0]
-        return np.vstack([N1, N2, N2_conj]
-                         + L1_cent[1:] + L2_cent[1:]).T
+        return np.vstack([N1, N2, N2_conj] + L1_cent[1:] + L2_cent[1:]).T
 
 def insert_conj(dW, port=1):
     """Insert a conjugate noise term to channel `port'.
@@ -571,12 +579,14 @@ def qsd_solve_two_systems(H1,
                           L2s,
                           R,
                           eps,
+                          n,
                           sdeint_method,
                           trans_phase=None,
                           obsq=None,
                           normalize_state=True,
                           downsample=1,
                           ops_on_whole_space = False,
+                          multiprocessing = False,
                           ntraj=1,
                           processes=8,
                           seed=1):
@@ -600,6 +610,8 @@ def qsd_solve_two_systems(H1,
         eps: float
             The multiplier by which the classical state displaces the coherent
             state
+        n: float
+            Scalar to multiply the measurement feedback noise
         sdeint_method (Optional) SDE solver method:
             Which SDE solver to use. Default is sdeint.itoSRI2.
         obsq (optional): list of NxN csr matrices, dtype = complex128
@@ -611,6 +623,8 @@ def qsd_solve_two_systems(H1,
         ops_on_whole_space (optional): Boolean
             whether the Given L and H operators have been defined on the whole
             space or individual subspaces.
+        multiprocessing (optional): Boolean
+            Whether or not to use multiprocessing
         ntraj (optional): int
             number of trajectories.
         processes (optional): int
@@ -644,13 +658,13 @@ def qsd_solve_two_systems(H1,
     psi0_arr = np.asarray(psi0.todense()).T[0]
     x0 = np.concatenate([psi0_arr.real, psi0_arr.imag])
     drift_diffusion = drift_diffusion_two_systems_holder(
-        H1, H2, L1s, L2s, R, eps, tspan, trans_phase=trans_phase,
+        H1, H2, L1s, L2s, R, eps, n, tspan, trans_phase=trans_phase,
         ops_on_whole_space=ops_on_whole_space)
 
     f = complex_to_real_vector(drift_diffusion.f_normalized)
     G = complex_to_real_matrix(drift_diffusion.G_normalized)
 
-    '''Generate psis with multiprocessing'''
+
     def SDE_helper(args, s):
         '''Let's make different wiener increments for each trajectory'''
         m = 2 * (len(L1s) + len(L2s))
@@ -661,10 +675,18 @@ def qsd_solve_two_systems(H1,
         dW_with_conj = insert_conj(dW, port=1)
         return sdeint_method(*args, dW=dW_with_conj,
             normalized=normalize_state, downsample=downsample)
-    pool = Pool(processes=processes,)
+
+    ## simulation parameters
     params = [[f, G, x0, tspan]] * ntraj
-    xs = np.asarray(pool.map(lambda z: SDE_helper(z[0], z[1]),
-        zip(params, seeds)))
+
+    if multiprocessing:
+        pool = Pool(processes=processes,)
+        xs = np.asarray(pool.map(lambda z: SDE_helper(z[0], z[1]),
+            zip(params, seeds)))
+    else:
+        xs = np.asarray([
+            SDE_helper(p, s) for p, s in zip(params, seeds)
+            ])
 
     print ("done running simulation!")
 

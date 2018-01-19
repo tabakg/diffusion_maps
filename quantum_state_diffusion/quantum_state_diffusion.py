@@ -192,7 +192,9 @@ def qsd_solve(H,
               multiprocessing = False,
               ntraj=1,
               processes=8,
-              seed=1):
+              seed=1,
+              implicit_type=None,
+              ):
     '''
     Args:
         H: NxN csr matrix, dtype = complex128
@@ -220,6 +222,8 @@ def qsd_solve(H,
             number of processes. If processes == 1, don't use multiprocessing.
         seed (optional): int
             Seed for random noise.
+        implicit_type (optional): string
+            Type of implicit solver to use if the solver is implicit.
 
     Returns:
         A dictionary with the following keys and values:
@@ -264,20 +268,37 @@ def qsd_solve(H,
         h = (tspan[N-1] - tspan[0])/(N - 1)
         np.random.seed(s)
         dW = np.random.normal(0.0, np.sqrt(h), (N, m)) / np.sqrt(2.)
-        return sdeint_method(*args, dW=dW, normalized=normalize_state)
+        if implicit_type is None:
+            out = sdeint_method(*args, dW=dW, normalized=normalize_state)
+        try:
+            out = sdeint_method(*args, dW=dW, normalized=normalize_state, implicit_type=implicit_type)
+        except TypeError:
+            print ("Not an implicit method. implicit_type argument ignored.")
+            out = sdeint_method(*args, dW=dW, normalized=normalize_state)
+        return out
 
     ## simulation parameters
     params = [[f, G, x0, tspan]] * ntraj
 
     if multiprocessing:
         pool = Pool(processes=processes,)
-        xs = np.asarray(pool.map(lambda z: SDE_helper(z[0], z[1]),
-            zip(params, seeds)))
+        outputs = pool.map(lambda z: SDE_helper(z[0], z[1]),
+            zip(params, seeds))
     else:
-        xs = np.asarray([
+        outputs = [
             SDE_helper(p, s) for p, s in zip(params, seeds)
-            ])
+            ]
+    try:
+        xs = np.array([ o["trajectory"] for o in outputs])
+    except KeyError:
+        print ("Warning: trajectory not returned by SDE method!")
+    try:
+        norms = np.array([o["norms"] for o in outputs])
+    except KeyError:
+        print ("Warning: norms not returned by SDE method!")
+        norms = None
 
+    print ("done running simulation!")
 
     psis = xs[:,:,:int(len(x0)/2)] + 1j * xs[:,:,int(len(x0)/2):]
 
@@ -289,7 +310,7 @@ def qsd_solve(H,
 
     T_fin = time()
     print ("Run time:  ", T_fin - T_init, " seconds.")
-    return {"psis":psis, "obsq_expects":obsq_expects, "seeds":seeds}
+    return {"psis":psis, "obsq_expects":obsq_expects, "seeds":seeds, "norms": norms}
 
 ################################################################################
 #### Two systems below
@@ -537,11 +558,9 @@ class drift_diffusion_two_systems_holder(object):
         L1_cent = [L1psi - l1*psi for L1psi,l1 in zip(self.L1psis, self.l1s)]
         L2_cent = [L2psi - l2*psi for L2psi,l2 in zip(self.L2psis, self.l2s)]
         N1 = self.T*L1_cent[0] + L2_cent[0]
-        N2 = self.n * self.eps * (
-            # 0.5*(self.T*np.conj(self.l1s[0])
-            + np.conj(self.l2s[0]) * psi
-            - self.L2s[0].H.dot(psi) )
-        N2_conj = -np.conj(N2) + self.R * L1_cent[0]
+        N2 = self.n * self.eps * (-self.L2s[0].H.dot(psi) )
+        N2_conj = (self.n * self.eps * (self.L2s[0].dot(psi) )
+                + self.R * L1_cent[0])
         return np.vstack([N1, N2, N2_conj] + L1_cent[1:] + L2_cent[1:]).T
 
 def insert_conj(dW, port=1):
@@ -589,7 +608,9 @@ def qsd_solve_two_systems(H1,
                           multiprocessing = False,
                           ntraj=1,
                           processes=8,
-                          seed=1):
+                          seed=1,
+                          implicit_type = None
+                          ):
     '''
     Args:
         H1: N1xN1 csr matrix, dtype = complex128
@@ -673,20 +694,47 @@ def qsd_solve_two_systems(H1,
         np.random.seed(s)
         dW = np.random.normal(0.0, np.sqrt(h), (N, m)) / np.sqrt(2.)
         dW_with_conj = insert_conj(dW, port=1)
-        return sdeint_method(*args, dW=dW_with_conj,
-            normalized=normalize_state, downsample=downsample)
+        if sdeint_method is sdeint.itoQuasiImplicitEuler:
+            implicit_ports = [1,2,int(m/2+1),int(m/2)+2]
+            out = sdeint_method(*args, dW=dW_with_conj,
+                normalized=normalize_state, downsample=downsample, implicit_ports=implicit_ports)
+            return out
+        if implicit_type is None:
+            out = sdeint_method(*args, dW=dW_with_conj,
+                normalized=normalize_state, downsample=downsample)
+            return out
+        try:
+            out = sdeint_method(*args, dW=dW_with_conj,
+                normalized=normalize_state, downsample=downsample,
+                implicit_type=implicit_type)
+        except TypeError:
+            print ("Not an implicit method. implicit_type argument ignored.")
+            out = sdeint_method(*args, dW=dW_with_conj,
+                normalized=normalize_state, downsample=downsample)
+        return out
+
 
     ## simulation parameters
     params = [[f, G, x0, tspan]] * ntraj
 
     if multiprocessing:
         pool = Pool(processes=processes,)
-        xs = np.asarray(pool.map(lambda z: SDE_helper(z[0], z[1]),
-            zip(params, seeds)))
+        outputs = pool.map(lambda z: SDE_helper(z[0], z[1]),
+            zip(params, seeds))
     else:
-        xs = np.asarray([
+        outputs = [
             SDE_helper(p, s) for p, s in zip(params, seeds)
-            ])
+            ]
+
+    try:
+        xs = np.array([ o["trajectory"] for o in outputs])
+    except KeyError:
+        print ("Warning: trajectory not returned by SDE method!")
+    try:
+        norms = np.array([o["norms"] for o in outputs])
+    except KeyError:
+        print ("Warning: norms not returned by SDE method!")
+        norms = None
 
     print ("done running simulation!")
 
@@ -700,7 +748,7 @@ def qsd_solve_two_systems(H1,
 
     T_fin = time()
     print ("Run time:  ", T_fin - T_init, " seconds.")
-    return {"psis":psis, "obsq_expects":obsq_expects, "seeds":seeds}
+    return {"psis":psis, "obsq_expects":obsq_expects, "seeds":seeds, "norms": norms}
 
 if __name__ == "__main__":
 
